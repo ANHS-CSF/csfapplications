@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+
+# Applicant data and report cards must never be committed.
+*.csv
+*.pdf

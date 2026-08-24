@@ -1,0 +1,9 @@
+name = "csf-eligibility-portal"
+pages_build_output_dir = "public"
+compatibility_date = "2026-08-24"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "csf"
+# Replace with the id printed by: npx wrangler d1 create csf
+database_id = "cc129375-9f01-4058-81db-41d85762f0f0"

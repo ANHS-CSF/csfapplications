@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>CSF Eligibility Portal</title>
+<style>
+:root {
+  --bg: #f6f7f9;      --panel: #ffffff;   --panel-2: #fafbfc;
+  --ink: #16191d;     --muted: #646b76;   --line: #e2e5ea;
+  --accent: #1f4fd8;  --accent-ink: #fff;
+  --ok-bg: #e7f6ec;   --ok-ink: #12683a;  --ok-line: #b7e2c6;
+  --no-bg: #fdeaea;   --no-ink: #97231f;  --no-line: #f2c4c2;
+  --warn-bg: #fdf3dc; --warn-ink: #7a5510; --warn-line: #ebd39a;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101215;     --panel: #191c21;   --panel-2: #15181c;
+    --ink: #e8eaed;    --muted: #9aa2ad;   --line: #2b3038;
+    --accent: #6f92f5; --accent-ink: #0d1016;
+    --ok-bg: #12301f;  --ok-ink: #7ede9f;  --ok-line: #22563a;
+    --no-bg: #34181a;  --no-ink: #f5a09b;  --no-line: #5c2a2c;
+    --warn-bg: #33290f; --warn-ink: #e7c477; --warn-line: #574a20;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+h1 { font-size: 17px; }
+h2 { font-size: 15px; }
+p { margin: 0; }
+a { color: var(--accent); }
+button {
+  font: inherit; font-weight: 550; cursor: pointer; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  padding: 7px 13px;
+}
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+button.sm { padding: 3px 8px; font-size: 13px; font-weight: 500; }
+input, select, textarea {
+  font: inherit; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+}
+input:focus, select:focus, textarea:focus, button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+select.sm { padding: 2px 6px; font-size: 13px; border-radius: 6px; }
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+
+/* ---- shell ---- */
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
+header.top {
+  position: sticky; top: 0; z-index: 20; background: var(--panel);
+  border-bottom: 1px solid var(--line); margin-bottom: 24px;
+}
+.top-in {
+  max-width: 1180px; margin: 0 auto; padding: 12px 20px;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.badge {
+  width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 12px;
+}
+nav.tabs { display: flex; gap: 2px; margin-left: auto; }
+nav.tabs button { border: 0; background: transparent; color: var(--muted); padding: 6px 12px; }
+nav.tabs button[aria-selected="true"] { background: var(--panel-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 18px; margin-bottom: 16px;
+}
+.card > header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.spacer { margin-left: auto; }
+
+/* ---- login ---- */
+.login { min-height: 100dvh; display: grid; place-items: center; padding: 20px; }
+.login .card { width: 100%; max-width: 370px; margin: 0; }
+.login label { display: block; font-weight: 550; margin-bottom: 6px; font-size: 14px; }
+.login input { width: 100%; }
+
+/* ---- drop zone ---- */
+.drop {
+  border: 1.5px dashed var(--line); border-radius: var(--radius);
+  padding: 32px 20px; text-align: center; background: var(--panel-2);
+}
+.drop.over { border-color: var(--accent); background: var(--ok-bg); }
+
+/* ---- tables ---- */
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+tbody tr.app-row { cursor: pointer; }
+tbody tr.app-row:hover { background: var(--panel-2); }
+.scroll { overflow-x: auto; }
+
+.pill {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 650; border: 1px solid;
+  white-space: nowrap;
+}
+.pill.ok   { background: var(--ok-bg);   color: var(--ok-ink);   border-color: var(--ok-line); }
+.pill.no   { background: var(--no-bg);   color: var(--no-ink);   border-color: var(--no-line); }
+.pill.warn { background: var(--warn-bg); color: var(--warn-ink); border-color: var(--warn-line); }
+.pts { font-variant-numeric: tabular-nums; font-weight: 650; }
+
+.detail { background: var(--panel-2); }
+.detail td { padding: 14px 16px; }
+.courses { width: 100%; margin-bottom: 10px; }
+.courses th, .courses td { padding: 5px 8px; border-bottom: 1px solid var(--line); }
+.courses tr.counted { background: color-mix(in srgb, var(--ok-bg) 55%, transparent); }
+.courses tr.excluded td { color: var(--muted); }
+
+/* ---- progress ---- */
+.bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+
+.stats { display: flex; gap: 22px; flex-wrap: wrap; }
+.stat b { display: block; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+
+.err { background: var(--no-bg); color: var(--no-ink); border: 1px solid var(--no-line);
+       border-radius: 8px; padding: 9px 12px; font-size: 14px; }
+.note { background: var(--warn-bg); color: var(--warn-ink); border: 1px solid var(--warn-line);
+        border-radius: 8px; padding: 9px 12px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- ============================ LOGIN ============================ -->
+<div class="login" id="login-view">
+  <form class="card" id="login-form">
+    <header style="gap:10px"><div class="badge">CSF</div><h1>Eligibility Portal</h1></header>
+    <label for="pw">Admin password</label>
+    <input id="pw" type="password" autocomplete="current-password" required autofocus>
+    <p class="err hidden" id="login-error" style="margin-top:10px"></p>
+    <button class="primary" style="width:100%; margin-top:12px" type="submit">Sign in</button>
+  </form>
+</div>
+
+<!-- ============================= APP ============================= -->
+<div id="app-view" class="hidden">
+  <header class="top">
+    <div class="top-in">
+      <div class="badge">CSF</div>
+      <h1>Eligibility Portal</h1>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="applicants" aria-selected="true">Applicants</button>
+        <button role="tab" data-tab="rules" aria-selected="false">Course Rules</button>
+        <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
+      </nav>
+      <button class="sm" id="signout">Sign out</button>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <!-- ---------------- applicants ---------------- -->
+    <section id="tab-applicants">
+      <div class="card" id="intake">
+        <header><h2>1 &middot; Load the application CSV</h2></header>
+        <div class="drop" id="drop">
+          <p style="font-weight:550">Drop the Google Forms export here</p>
+          <p class="muted" style="margin:4px 0 12px">or</p>
+          <input type="file" id="file" accept=".csv,text/csv" hidden>
+          <button onclick="document.getElementById('file').click()">Choose CSV file</button>
+        </div>
+      </div>
+
+      <div class="card hidden" id="mapping">
+        <header>
+          <h2>2 &middot; Confirm the columns</h2>
+          <span class="muted" id="map-summary"></span>
+        </header>
+        <div class="row" id="map-fields" style="gap:14px; align-items:flex-end"></div>
+        <div class="row" style="margin-top:16px">
+          <button class="primary" id="run">Check eligibility</button>
+          <span class="muted" id="run-hint"></span>
+        </div>
+      </div>
+
+      <div class="card hidden" id="progress">
+        <header><h2>Reading report cards</h2><span class="muted spacer" id="prog-text"></span></header>
+        <div class="bar"><i id="prog-bar" style="width:0%"></i></div>
+      </div>
+
+      <div class="card hidden" id="results">
+        <header>
+          <h2>Results</h2>
+          <div class="spacer row">
+            <input id="search" type="search" placeholder="Filter by name…" style="width:190px">
+            <select id="filter" class="sm" style="padding:7px 9px; font-size:15px">
+              <option value="all">All applicants</option>
+              <option value="qualified">Qualified only</option>
+              <option value="not">Not qualified only</option>
+              <option value="flagged">Needs review only</option>
+            </select>
+            <button id="export">Export CSV</button>
+          </div>
+        </header>
+        <div class="stats" id="stats" style="margin-bottom:16px"></div>
+        <p class="note hidden" id="review-note" style="margin-bottom:14px"></p>
+        <div class="scroll">
+          <table>
+            <thead><tr>
+              <th style="width:26px"></th><th>Applicant</th><th>ID</th><th>Grade</th>
+              <th style="text-align:right">Points</th><th>Status</th><th>Notes</th><th>Card</th>
+            </tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------- course rules ---------------- -->
+    <section id="tab-rules" class="hidden">
+      <div class="card">
+        <header>
+          <h2>Course rules</h2>
+          <span class="muted" id="rules-count"></span>
+          <div class="spacer row">
+            <input id="rules-search" type="search" placeholder="Filter courses…" style="width:200px">
+            <button id="rules-add">Add course</button>
+          </div>
+        </header>
+        <p class="muted" style="margin-bottom:12px">
+          <b>AP</b> and <b>Honors</b> earn +1 for an A or B (two courses max).
+          <b>Regular</b> counts normally. <b>Inapplicable</b> is excluded entirely — athletics and PE.
+          Anything not listed here is treated as Regular and flagged for review.
+        </p>
+        <div class="scroll">
+          <table><thead><tr><th>Course</th><th style="width:190px">Category</th><th style="width:70px"></th></tr></thead>
+          <tbody id="rules-rows"></tbody></table>
+        </div>
+      </div>
+      <div class="card">
+        <header><h2>Bulk paste</h2></header>
+        <p class="muted" style="margin-bottom:10px">
+          One course per line as <span class="mono">Course Name, Category</span>. Existing courses are updated.
+        </p>
+        <textarea id="bulk" rows="6" style="width:100%" placeholder="Ath Football, Inapplicable
+Hon Precalculus, Honors
+AP Chem, AP"></textarea>
+        <div class="row" style="margin-top:10px">
+          <button class="primary" id="bulk-save">Save to database</button>
+          <span class="muted" id="bulk-msg"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------- settings ---------------- -->
+    <section id="tab-settings" class="hidden">
+      <div class="card">
+        <header><h2>Scoring rules</h2></header>
+        <p style="margin-bottom:12px">
+          10 points qualifies. A = 3, B = 1, C = 0, and a D or F disqualifies.
+          At most 5 courses count, plus +1 for an A or B in an AP or Honors course, for up to 2 courses.
+        </p>
+        <label class="row" style="gap:8px; cursor:pointer">
+          <input type="checkbox" id="strict-df" style="width:16px;height:16px">
+          <span>A D or F in an <b>Inapplicable</b> course (athletics/PE) also disqualifies</span>
+        </label>
+        <p class="muted" style="margin-top:6px; padding-left:24px">
+          Off by default: athletics courses don't count toward the total, so they don't count against it either.
+          Turn this on if your chapter treats any D or F as disqualifying.
+        </p>
+      </div>
+      <div class="card">
+        <header><h2>Privacy</h2></header>
+        <p class="muted">
+          Report cards are streamed through this server and read in your browser. Nothing is stored:
+          no PDFs are cached, and no applicant data is written to the database — only the course rules persist.
+          Exports are saved to your own computer.
+        </p>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script type="module" src="./ui.js"></script>
+</body>
+</html>
