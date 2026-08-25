@@ -34,7 +34,6 @@ export async function extractCourses(bytes) {
   const courses = [];
   const allLines = [];
   let sawText = false;
-  let semester = null;
 
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
@@ -53,13 +52,14 @@ export async function extractCourses(bytes) {
     const xCourse = xOf('Course'), xTeacher = xOf('Teacher'), xCredit = xOf('Credit');
     if (xCourse == null || xTeacher == null || xCredit == null) continue;
 
-    // The grade column has no fixed label — it's the semester ("1st"/"2nd"),
-    // which also tells us which term this card covers.
+    // The grade column carries no fixed label — it is the semester ordinal
+    // ("1st" / "2nd"), so it is located by position rather than by name. That is
+    // what lets the same parser read a 1st-semester card in the spring cycle and
+    // a 2nd-semester card in the fall cycle without changing anything.
     const gradeCol = header
       .filter(c => c.x > xTeacher && c.x < xCredit)
       .sort((a, b) => a.x - b.x)[0];
     const xGrade = gradeCol?.x ?? xTeacher + (xCredit - xTeacher) / 2;
-    if (gradeCol && /^\d(st|nd|rd|th)$/.test(gradeCol.s)) semester = gradeCol.s;
 
     for (const line of lines.slice(headerIdx + 1)) {
       const slice = (from, to) =>
@@ -80,7 +80,7 @@ export async function extractCourses(bytes) {
     }
   }
 
-  return { courses, sawText, semester, ...readHeading(allLines) };
+  return { courses, sawText, ...readHeading(allLines) };
 }
 
 // Every Aeries card prints its term as e.g. "2nd Semester Grade Report 1/5/2026

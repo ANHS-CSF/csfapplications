@@ -369,7 +369,6 @@ async function run() {
 async function processApplicant(job) {
   const courses = [];
   const problems = [];
-  let semester = null;
   const schools = [], terms = [];
 
   for (const link of job.links) {
@@ -382,7 +381,6 @@ async function processApplicant(job) {
       }
       const bytes = new Uint8Array(await res.arrayBuffer());
       const out = await extractCourses(bytes);
-      semester = semester || out.semester;
       if (out.school) schools.push(out.school);
       if (out.term) terms.push(out.term);
 
@@ -397,7 +395,7 @@ async function processApplicant(job) {
     }
   }
 
-  return { ...job, courses, problems, semester, schools, terms, open: false };
+  return { ...job, courses, problems, schools, terms, open: false };
 }
 
 /* -------------------------------------------------------------- render --- */
