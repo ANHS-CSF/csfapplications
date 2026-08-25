@@ -129,6 +129,23 @@ export function checkSubmission({ schools = [], terms = [] }, settings = DEFAULT
   };
 }
 
+/**
+ * The final call on an applicant, kept here rather than in the UI because it is
+ * the one decision that determines a student's outcome and so is worth testing.
+ *
+ * Three outcomes, and the distinction that matters most is between the second
+ * and third: NOT QUALIFIED means "we read this card and the points fall short",
+ * while NEEDS REVIEW means "we could not fairly judge this yet". A submission
+ * problem — an unreadable PDF, an unrecognized school, the wrong semester — is
+ * never allowed to read as an academic failure, because those are fixable by an
+ * email and a resubmission.
+ */
+export function statusFor({ result, check } = {}) {
+  if (!result || result.flags?.includes('no-courses')) return 'NEEDS REVIEW';
+  if (check?.termOk === false || check?.schoolOk === false) return 'NEEDS REVIEW';
+  return result.qualified ? 'QUALIFIED' : 'NOT QUALIFIED';
+}
+
 /* ------------------------------------------------------------------ csv --- */
 
 // Full RFC-4180 parse. Required, not optional: the Google Forms export puts

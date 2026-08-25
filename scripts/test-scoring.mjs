@@ -1,4 +1,4 @@
-import { scoreApplicant, normalizeGrade, parseCsv, toCsv, checkSubmission, DEFAULT_SETTINGS } from '../public/scoring.js';
+import { scoreApplicant, normalizeGrade, parseCsv, toCsv, checkSubmission, statusFor, DEFAULT_SETTINGS } from '../public/scoring.js';
 import { readFileSync, existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
@@ -149,6 +149,38 @@ t('an unrecognized SECOND school is caught', () => {
 t('one unreadable card does not mask a bad sibling', () => {
   const r = sub(['Aliso Niguel High School'], [spring26, fall25]);
   assert.equal(r.termOk, false);
+});
+
+console.log('status');
+const passing = { total: 13, qualified: true, flags: [] };
+const short   = { total: 8,  qualified: false, flags: [] };
+const clean   = { schoolOk: true, termOk: true };
+
+t('enough points qualifies', () => {
+  assert.equal(statusFor({ result: passing, check: clean }), 'QUALIFIED');
+});
+t('too few points is not qualified', () => {
+  assert.equal(statusFor({ result: short, check: clean }), 'NOT QUALIFIED');
+});
+t('a wrong-semester card needs review, never not-qualified', () => {
+  assert.equal(statusFor({ result: passing, check: { schoolOk: true, termOk: false } }), 'NEEDS REVIEW');
+  assert.equal(statusFor({ result: short,   check: { schoolOk: true, termOk: false } }), 'NEEDS REVIEW');
+});
+t('an unrecognized school needs review', () => {
+  assert.equal(statusFor({ result: passing, check: { schoolOk: false, termOk: true } }), 'NEEDS REVIEW');
+});
+t('an unreadable card needs review rather than failing the student', () => {
+  assert.equal(statusFor({ result: { total: 0, qualified: false, flags: ['no-courses'] }, check: clean }),
+    'NEEDS REVIEW');
+  assert.equal(statusFor({}), 'NEEDS REVIEW');
+});
+t('undecided checks do not block a pass', () => {
+  assert.equal(statusFor({ result: passing, check: { schoolOk: null, termOk: null } }), 'QUALIFIED');
+});
+t('a submission problem is never reported as an academic failure', () => {
+  for (const check of [{ termOk: false }, { schoolOk: false }, { termOk: false, schoolOk: false }]) {
+    assert.notEqual(statusFor({ result: short, check }), 'NOT QUALIFIED');
+  }
 });
 
 console.log('csv');

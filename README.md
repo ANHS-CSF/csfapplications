@@ -34,14 +34,17 @@ and stored in D1, so every reviewer scores a batch the same way.
 **Term** — the card must be from the semester that just ended. Aeries prints this
 as e.g. `2nd Semester Grade Report 1/5/2026 6/4/2026`; the end date supplies the
 year, which the ordinal alone doesn't (`2nd Semester` is Spring of whichever year
-it ended). A card from any other term is **rejected** — last semester's grades
-can't answer this semester's question.
+it ended).
 
 **School** — the card's heading must contain one of the accepted school names.
-Matching ignores case, punctuation and spacing. A card from an unlisted school is
-**flagged for review, not rejected**: it may be a transfer, a concurrent
-enrollment, or simply a heading that didn't read cleanly, and none of those are
-the student's fault.
+Matching ignores case, punctuation and spacing.
+
+Both failures produce **Needs review**, never **Not qualified**. That distinction
+is the point: *Not qualified* means the card was read and the points fall short,
+while *Needs review* means it couldn't be judged fairly yet. A wrong-semester
+upload, an unrecognized school and an unreadable PDF are all fixable with an
+email and a resubmission, so none of them are allowed to read as an academic
+failure. Filter to **Needs review only** to get the list to email.
 
 Every card an applicant submits is checked, not just the first — a student with a
 concurrent-enrollment card alongside their main one has two, and a wrong-term

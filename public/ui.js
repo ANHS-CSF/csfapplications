@@ -1,5 +1,5 @@
 // Wiring for the eligibility portal: auth, CSV intake, batch extraction, review.
-import { parseCsv, toCsv, scoreApplicant, normalizeGrade, checkSubmission, DEFAULT_SETTINGS } from './scoring.js';
+import { parseCsv, toCsv, scoreApplicant, normalizeGrade, checkSubmission, statusFor, DEFAULT_SETTINGS } from './scoring.js';
 import { extractCourses } from './extract.js';
 
 const $ = sel => document.querySelector(sel);
@@ -425,22 +425,14 @@ function notesFor(a) {
   return notes;
 }
 
-const needsReview = a =>
-  a.problems.length > 0 || (a.unknown?.length ?? 0) > 0 || a.check?.schoolOk === false;
+// One status decision, used by both the table and the export, so they cannot
+// disagree. The rule itself lives in scoring.js where it is unit-tested.
+const statusOf = a => statusFor(a);
 
-// One status decision, used by both the table and the export. An applicant whose
-// report card couldn't be read is NOT the same as one who failed to earn 10
-// points, and must never be exported as though they were.
-function statusOf(a) {
-  // A card from the wrong term is rejected outright: the applicant was told which
-  // semester to submit, and last semester's grades can't answer this semester's
-  // question. An unrecognized school only warrants a look — it may be a transfer
-  // or a heading that didn't read cleanly, neither of which is the student's fault.
-  if (a.check?.termOk === false) return 'NOT QUALIFIED';
-  if (!a.result || a.result.flags?.includes('no-courses')) return 'NEEDS REVIEW';
-  if (a.check?.schoolOk === false) return 'NEEDS REVIEW';
-  return a.result.qualified ? 'QUALIFIED' : 'NOT QUALIFIED';
-}
+// Wants a human's attention, which is broader than the status: an applicant can
+// be comfortably QUALIFIED and still have an unlisted course worth classifying.
+const needsReview = a =>
+  a.problems.length > 0 || (a.unknown?.length ?? 0) > 0 || statusOf(a) === 'NEEDS REVIEW';
 
 function renderResults() {
   const q = ($('#search').value || '').toLowerCase();
@@ -449,7 +441,7 @@ function renderResults() {
 
   const qualified = all.filter(a => statusOf(a) === 'QUALIFIED').length;
   const rejected = all.filter(a => statusOf(a) === 'NOT QUALIFIED').length;
-  const flagged = all.filter(a => needsReview(a) || statusOf(a) === 'NEEDS REVIEW').length;
+  const flagged = all.filter(needsReview).length;
   $('#stats').textContent = '';
   for (const [label, val] of [
     ['Applicants', all.length], ['Qualified', qualified],
@@ -465,14 +457,14 @@ function renderResults() {
   const note = $('#review-note');
   note.classList.toggle('hidden', flagged === 0);
   if (flagged) {
-    note.textContent = `${flagged} applicant(s) need a look: a report card couldn't be read, or a course isn't in the course rules. Open a row to fix grades or classify a course.`;
+    note.textContent = `${flagged} applicant(s) need a look — an unreadable card, the wrong semester, an unrecognized school, or a course that isn't in the course rules. Filter to "Needs review only" to work through them.`;
   }
 
   const shown = all.filter(a => {
     if (q && !a.name.toLowerCase().includes(q)) return false;
     if (mode === 'qualified') return statusOf(a) === 'QUALIFIED';
     if (mode === 'not') return statusOf(a) === 'NOT QUALIFIED';
-    if (mode === 'flagged') return needsReview(a) || statusOf(a) === 'NEEDS REVIEW';
+    if (mode === 'flagged') return needsReview(a);
     return true;
   });
 
@@ -503,8 +495,10 @@ function applicantRow(a) {
   push(a.studentId, 'mono muted');
   push(a.level, 'muted');
   const status = statusOf(a);
-  push(status === 'NEEDS REVIEW' || a.check?.termOk === false ? '—' : String(a.result.total),
-       'pts', 'right');
+  // Points are withheld for anything needing review: a wrong-term card has real
+  // points, but they answer the wrong semester's question and must not be shown
+  // as though they were this semester's result.
+  push(status === 'NEEDS REVIEW' ? '—' : String(a.result.total), 'pts', 'right');
 
   const pill = document.createElement('span');
   pill.className = 'pill ' + (status === 'QUALIFIED' ? 'ok' : status === 'NOT QUALIFIED' ? 'no' : 'warn');
@@ -598,7 +592,8 @@ function detailRow(a) {
   summary.style.marginBottom = '10px';
   if (a.check?.termOk === false) {
     summary.textContent =
-      `${a.check.termReason}. Grades below are shown for reference only and do not count.`;
+      `${a.check.termReason}. Ask the applicant to resubmit — the grades below are ` +
+      `from the wrong term and do not count.`;
   } else if (a.result && !a.result.flags?.includes('no-courses')) {
     summary.textContent = a.result.reason
       ? a.result.reason
@@ -644,7 +639,7 @@ $('#export').addEventListener('click', () => {
   for (const a of state.applicants.filter(Boolean)) {
     rows.push([
       a.name, a.studentId, a.email, a.level,
-      statusOf(a) === 'NEEDS REVIEW' || a.check?.termOk === false ? '' : (a.result?.total ?? ''),
+      statusOf(a) === 'NEEDS REVIEW' ? '' : (a.result?.total ?? ''),
       statusOf(a),
       (a.schools ?? []).join(' + '),
       (a.terms ?? []).map(t => t.label).join(' + '),
