@@ -79,6 +79,56 @@ export function scoreApplicant(courses, { dfAnywhereDisqualifies = false } = {})
 const isBonusEligible = c => (c.category === 'AP' || c.category === 'Honors') && (c.grade === 'A' || c.grade === 'B');
 const value = c => (GRADE_POINTS[c.grade] ?? -1) + (isBonusEligible(c) ? 1 : 0);
 
+/* ----------------------------------------------------- submission checks --- */
+
+export const DEFAULT_SETTINGS = {
+  allowedSchools: ['Aliso Niguel High School', 'California Preparatory Academy'],
+  requiredTerm: { term: 'Spring', year: 2026 },
+  dfAnywhereDisqualifies: false,
+};
+
+const loosen = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Check an applicant's report cards came from accepted schools and the required term.
+ *
+ * Takes every card the applicant submitted, not just the first: a student who
+ * attaches a concurrent-enrollment card alongside their main one has two cards,
+ * and a wrong-term second card is just as disqualifying as a wrong-term first one.
+ *
+ * The two failures are not equivalent and are not treated as such. A card from
+ * the wrong semester is a disqualifying submission. An unrecognized school only
+ * earns a flag — it may be a transfer, a concurrent enrollment, or a heading that
+ * didn't read cleanly, and none of those should silently reject a student.
+ *
+ * Either check returns null when nothing could be read, which means "undecided",
+ * not "failed".
+ */
+export function checkSubmission({ schools = [], terms = [] }, settings = DEFAULT_SETTINGS) {
+  const allowed = settings.allowedSchools ?? DEFAULT_SETTINGS.allowedSchools;
+  const required = settings.requiredTerm ?? DEFAULT_SETTINGS.requiredTerm;
+
+  const seenSchools = schools.filter(Boolean);
+  const badSchool = seenSchools.find(name => {
+    const haystack = loosen(name);
+    return !allowed.some(ok => haystack.includes(loosen(ok)));
+  });
+
+  const seenTerms = terms.filter(Boolean);
+  const badTerm = seenTerms.find(t =>
+    t.season !== required.term || (t.year != null && t.year !== required.year));
+
+  return {
+    schoolOk: seenSchools.length ? !badSchool : null,
+    termOk: seenTerms.length ? !badTerm : null,
+    schoolReason: badSchool ? `Unrecognized school: ${String(badSchool).slice(0, 60)}` : null,
+    termReason: badTerm
+      ? `Wrong semester: card is ${badTerm.year ? `${badTerm.season} ${badTerm.year}` : badTerm.season}` +
+        `, expected ${required.term} ${required.year}`
+      : null,
+  };
+}
+
 /* ------------------------------------------------------------------ csv --- */
 
 // Full RFC-4180 parse. Required, not optional: the Google Forms export puts

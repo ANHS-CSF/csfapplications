@@ -1,5 +1,5 @@
 // Wiring for the eligibility portal: auth, CSV intake, batch extraction, review.
-import { parseCsv, toCsv, scoreApplicant, normalizeGrade } from './scoring.js';
+import { parseCsv, toCsv, scoreApplicant, normalizeGrade, checkSubmission, DEFAULT_SETTINGS } from './scoring.js';
 import { extractCourses } from './extract.js';
 
 const $ = sel => document.querySelector(sel);
@@ -13,7 +13,7 @@ const state = {
   mapping: {},
   applicants: [],    // scored results
   rules: new Map(),  // normalized course name -> { display, value }
-  strictDf: localStorage.getItem('csf.strictDf') === '1',
+  settings: { ...DEFAULT_SETTINGS },
 };
 
 /* ------------------------------------------------------------- session --- */
@@ -52,8 +52,7 @@ $('#signout').addEventListener('click', async () => {
 async function enterApp() {
   $('#login-view').classList.add('hidden');
   $('#app-view').classList.remove('hidden');
-  $('#strict-df').checked = state.strictDf;
-  await loadRules();
+  await Promise.all([loadRules(), loadSettings()]);
 }
 
 (async function boot() {
@@ -76,9 +75,58 @@ document.querySelectorAll('nav.tabs button').forEach(btn => {
 });
 
 $('#strict-df').addEventListener('change', e => {
-  state.strictDf = e.target.checked;
-  localStorage.setItem('csf.strictDf', state.strictDf ? '1' : '0');
+  saveSettings({ dfAnywhereDisqualifies: e.target.checked })
+    .catch(err => { alert(err.message); e.target.checked = !e.target.checked; });
+});
+
+/* ----------------------------------------------------------- settings --- */
+
+async function loadSettings() {
+  const { settings } = await api('/api/settings');
+  state.settings = settings;
+  renderSettings();
+}
+
+async function saveSettings(patch) {
+  const next = { ...state.settings, ...patch };
+  await api('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: patch }),
+  });
+  state.settings = next;
+  renderSettings();
   rescoreAll();
+}
+
+function renderSettings() {
+  const { allowedSchools, requiredTerm, dfAnywhereDisqualifies } = state.settings;
+  $('#strict-df').checked = !!dfAnywhereDisqualifies;
+  $('#schools').value = (allowedSchools || []).join('\n');
+  $('#term-season').value = requiredTerm?.term ?? 'Spring';
+  $('#term-year').value = requiredTerm?.year ?? new Date().getFullYear();
+  $('#term-echo').textContent =
+    `Cards must be from ${requiredTerm?.term} ${requiredTerm?.year} — ` +
+    `the ${requiredTerm?.term === 'Fall' ? '1st' : '2nd'} semester grade report.`;
+}
+
+$('#save-schools').addEventListener('click', async () => {
+  const list = $('#schools').value.split('\n').map(s2 => s2.trim()).filter(Boolean);
+  const msg = $('#schools-msg');
+  try {
+    await saveSettings({ allowedSchools: list });
+    msg.textContent = `Saved ${list.length} school(s).`;
+  } catch (e) { msg.textContent = e.message; }
+});
+
+$('#save-term').addEventListener('click', async () => {
+  const msg = $('#term-msg');
+  try {
+    await saveSettings({
+      requiredTerm: { term: $('#term-season').value, year: Number($('#term-year').value) },
+    });
+    msg.textContent = 'Saved.';
+  } catch (e) { msg.textContent = e.message; }
 });
 
 /* -------------------------------------------------------- course rules --- */
@@ -322,6 +370,7 @@ async function processApplicant(job) {
   const courses = [];
   const problems = [];
   let semester = null;
+  const schools = [], terms = [];
 
   for (const link of job.links) {
     try {
@@ -334,6 +383,8 @@ async function processApplicant(job) {
       const bytes = new Uint8Array(await res.arrayBuffer());
       const out = await extractCourses(bytes);
       semester = semester || out.semester;
+      if (out.school) schools.push(out.school);
+      if (out.term) terms.push(out.term);
 
       if (!out.courses.length) {
         problems.push(out.sawText
@@ -346,7 +397,7 @@ async function processApplicant(job) {
     }
   }
 
-  return { ...job, courses, problems, semester, open: false };
+  return { ...job, courses, problems, semester, schools, terms, open: false };
 }
 
 /* -------------------------------------------------------------- render --- */
@@ -355,16 +406,20 @@ function rescoreAll() {
   for (const a of state.applicants) {
     if (!a) continue;
     a.scored = a.courses.map(c => ({ ...c, category: categoryOf(c.name) }));
-    a.result = scoreApplicant(a.scored, { dfAnywhereDisqualifies: state.strictDf });
+    a.result = scoreApplicant(a.scored, {
+      dfAnywhereDisqualifies: !!state.settings.dfAnywhereDisqualifies,
+    });
     a.unknown = a.courses.filter(c => !isKnown(c.name)).map(c => c.name);
+    a.check = checkSubmission({ schools: a.schools, terms: a.terms }, state.settings);
   }
   renderResults();
 }
 
 function notesFor(a) {
   const notes = [...a.problems];
+  if (a.check?.termReason) notes.push(a.check.termReason);
+  if (a.check?.schoolReason) notes.push(a.check.schoolReason);
   if (a.unknown?.length) notes.push(`${a.unknown.length} unlisted course${a.unknown.length > 1 ? 's' : ''}`);
-  if (a.semester && a.semester !== '2nd') notes.push(`${a.semester} semester card`);
   if (a.links.length > 1) notes.push('two cards merged');
   if (/fresh/i.test(a.level)) notes.push('freshman — cannot apply');
   if (a.result?.reason) notes.push(a.result.reason);
@@ -372,13 +427,20 @@ function notesFor(a) {
   return notes;
 }
 
-const needsReview = a => a.problems.length > 0 || (a.unknown?.length ?? 0) > 0;
+const needsReview = a =>
+  a.problems.length > 0 || (a.unknown?.length ?? 0) > 0 || a.check?.schoolOk === false;
 
 // One status decision, used by both the table and the export. An applicant whose
 // report card couldn't be read is NOT the same as one who failed to earn 10
 // points, and must never be exported as though they were.
 function statusOf(a) {
+  // A card from the wrong term is rejected outright: the applicant was told which
+  // semester to submit, and last semester's grades can't answer this semester's
+  // question. An unrecognized school only warrants a look — it may be a transfer
+  // or a heading that didn't read cleanly, neither of which is the student's fault.
+  if (a.check?.termOk === false) return 'NOT QUALIFIED';
   if (!a.result || a.result.flags?.includes('no-courses')) return 'NEEDS REVIEW';
+  if (a.check?.schoolOk === false) return 'NEEDS REVIEW';
   return a.result.qualified ? 'QUALIFIED' : 'NOT QUALIFIED';
 }
 
@@ -442,9 +504,10 @@ function applicantRow(a) {
   push(a.name);
   push(a.studentId, 'mono muted');
   push(a.level, 'muted');
-  push(statusOf(a) === 'NEEDS REVIEW' ? '—' : String(a.result.total), 'pts', 'right');
-
   const status = statusOf(a);
+  push(status === 'NEEDS REVIEW' || a.check?.termOk === false ? '—' : String(a.result.total),
+       'pts', 'right');
+
   const pill = document.createElement('span');
   pill.className = 'pill ' + (status === 'QUALIFIED' ? 'ok' : status === 'NOT QUALIFIED' ? 'no' : 'warn');
   pill.textContent = status;
@@ -535,7 +598,10 @@ function detailRow(a) {
   const summary = document.createElement('p');
   summary.className = 'muted';
   summary.style.marginBottom = '10px';
-  if (a.result && !a.result.flags?.includes('no-courses')) {
+  if (a.check?.termOk === false) {
+    summary.textContent =
+      `${a.check.termReason}. Grades below are shown for reference only and do not count.`;
+  } else if (a.result && !a.result.flags?.includes('no-courses')) {
     summary.textContent = a.result.reason
       ? a.result.reason
       : `${a.result.base} points from grades + ${a.result.bonus} AP/Honors bonus = ${a.result.total}. Needs 10.`;
@@ -575,13 +641,15 @@ $('#filter').addEventListener('change', renderResults);
 $('#export').addEventListener('click', () => {
   const rows = [[
     'Name', 'Student ID', 'Email', 'Grade level', 'Points', 'Status',
-    'Courses counted', 'All courses', 'Notes', 'Report card',
+    'School', 'Term', 'Courses counted', 'All courses', 'Notes', 'Report card',
   ]];
   for (const a of state.applicants.filter(Boolean)) {
     rows.push([
       a.name, a.studentId, a.email, a.level,
-      statusOf(a) === 'NEEDS REVIEW' ? '' : (a.result?.total ?? ''),
+      statusOf(a) === 'NEEDS REVIEW' || a.check?.termOk === false ? '' : (a.result?.total ?? ''),
       statusOf(a),
+      (a.schools ?? []).join(' + '),
+      (a.terms ?? []).map(t => t.label).join(' + '),
       (a.result?.chosen ?? []).map(c => `${c.name} ${c.grade}`).join('; '),
       (a.scored ?? []).map(c => `${c.name} ${c.grade} (${c.category})`).join('; '),
       notesFor(a).join('; '),

@@ -260,6 +260,41 @@ AP Chem, AP"></textarea>
     <!-- ---------------- settings ---------------- -->
     <section id="tab-settings" class="hidden">
       <div class="card">
+        <header><h2>Accepted term</h2></header>
+        <p class="muted" style="margin-bottom:12px">
+          Applicants must submit the report card from the semester that just ended.
+          A card from any other term is <b>rejected</b> — its grades can't answer this
+          semester's question.
+        </p>
+        <div class="row">
+          <select id="term-season">
+            <option value="Spring">Spring (2nd semester)</option>
+            <option value="Fall">Fall (1st semester)</option>
+          </select>
+          <input id="term-year" type="number" min="2000" max="2100" step="1" style="width:110px">
+          <button class="primary" id="save-term">Save</button>
+          <span class="muted" id="term-msg"></span>
+        </div>
+        <p class="muted" id="term-echo" style="margin-top:10px"></p>
+      </div>
+
+      <div class="card">
+        <header><h2>Accepted schools</h2></header>
+        <p class="muted" style="margin-bottom:10px">
+          One per line. Matching ignores case, punctuation and spacing, and a card
+          matches if its heading contains any of these names. A card from a school
+          not listed here is <b>flagged for review</b> rather than rejected —
+          it may be a transfer, a concurrent enrollment, or a heading that didn't
+          read cleanly.
+        </p>
+        <textarea id="schools" rows="4" style="width:100%"></textarea>
+        <div class="row" style="margin-top:10px">
+          <button class="primary" id="save-schools">Save</button>
+          <span class="muted" id="schools-msg"></span>
+        </div>
+      </div>
+
+      <div class="card">
         <header><h2>Scoring rules</h2></header>
         <p style="margin-bottom:12px">
           10 points qualifies. A = 3, B = 1, C = 0, and a D or F disqualifies.

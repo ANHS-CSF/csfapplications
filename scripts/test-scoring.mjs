@@ -1,4 +1,4 @@
-import { scoreApplicant, normalizeGrade, parseCsv, toCsv } from '../public/scoring.js';
+import { scoreApplicant, normalizeGrade, parseCsv, toCsv, checkSubmission, DEFAULT_SETTINGS } from '../public/scoring.js';
 import { readFileSync, existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
@@ -81,6 +81,74 @@ t('honors B beats regular B when a bonus slot is open', () => {
 t('empty course list is handled', () => {
   const r = scoreApplicant([]);
   assert.equal(r.qualified, false); assert.deepEqual(r.flags, ['no-courses']);
+});
+
+console.log('submission checks');
+const SETTINGS = { ...DEFAULT_SETTINGS, requiredTerm: { term: 'Spring', year: 2026 } };
+const spring26 = { semesterNo: 2, season: 'Spring', year: 2026, label: '2nd Semester ending 6/4/2026' };
+const fall25   = { semesterNo: 1, season: 'Fall',   year: 2025, label: '1st Semester ending 12/18/2025' };
+
+const sub = (schools, terms, st = SETTINGS) =>
+  checkSubmission({ schools: [].concat(schools), terms: [].concat(terms) }, st);
+
+t('the required term passes', () => {
+  const r = sub('Aliso Niguel High School', spring26);
+  assert.equal(r.termOk, true); assert.equal(r.schoolOk, true);
+});
+t('the previous fall is rejected', () => {
+  const r = sub('Aliso Niguel High School', fall25);
+  assert.equal(r.termOk, false);
+  assert.match(r.termReason, /Fall 2025, expected Spring 2026/);
+});
+t('the right season in the wrong year is rejected', () => {
+  assert.equal(sub('Aliso Niguel High School', { ...spring26, year: 2025 }).termOk, false);
+});
+t('both accepted schools match', () => {
+  for (const name of ['Aliso Niguel High School', 'California Preparatory Academy']) {
+    assert.equal(sub(name, spring26).schoolOk, true);
+  }
+});
+t('school matching ignores case, punctuation and spacing', () => {
+  for (const v of ['ALISO NIGUEL HIGH SCHOOL', 'aliso  niguel   high school',
+                   'Aliso Niguel High School - Capistrano USD']) {
+    assert.equal(sub(v, spring26).schoolOk, true);
+  }
+});
+t('another school is flagged, not passed', () => {
+  const r = sub('Silicon Valley High (Nevada)', spring26);
+  assert.equal(r.schoolOk, false);
+  assert.match(r.schoolReason, /Silicon Valley/);
+});
+t('an unread heading is undecided rather than a failure', () => {
+  const r = sub([], []);
+  assert.equal(r.schoolOk, null); assert.equal(r.termOk, null);
+});
+t('a Fall requirement accepts a fall card', () => {
+  const r = sub('Aliso Niguel High School', fall25,
+    { ...DEFAULT_SETTINGS, requiredTerm: { term: 'Fall', year: 2025 } });
+  assert.equal(r.termOk, true);
+});
+
+console.log('submission checks: multiple cards');
+t('an Aliso + Cal Prep pair both from the right term passes', () => {
+  const r = sub(['Aliso Niguel High School', 'California Preparatory Academy'],
+                [spring26, spring26]);
+  assert.equal(r.schoolOk, true); assert.equal(r.termOk, true);
+});
+t('a wrong-term SECOND card is caught, not just the first', () => {
+  const r = sub(['Aliso Niguel High School', 'California Preparatory Academy'],
+                [spring26, fall25]);
+  assert.equal(r.termOk, false);
+  assert.match(r.termReason, /Fall 2025/);
+});
+t('an unrecognized SECOND school is caught', () => {
+  const r = sub(['Aliso Niguel High School', 'Some Other High'], [spring26, spring26]);
+  assert.equal(r.schoolOk, false);
+  assert.match(r.schoolReason, /Some Other High/);
+});
+t('one unreadable card does not mask a bad sibling', () => {
+  const r = sub(['Aliso Niguel High School'], [spring26, fall25]);
+  assert.equal(r.termOk, false);
 });
 
 console.log('csv');

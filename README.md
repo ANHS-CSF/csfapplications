@@ -26,6 +26,29 @@ By default a D or F only disqualifies if it's in a course that counts, since
 athletics courses don't count toward the total either. Flip that under
 **Settings** if your chapter treats any D or F as disqualifying.
 
+## Submission checks
+
+Beyond grades, each card is checked against two rules configured under **Settings**
+and stored in D1, so every reviewer scores a batch the same way.
+
+**Term** — the card must be from the semester that just ended. Aeries prints this
+as e.g. `2nd Semester Grade Report 1/5/2026 6/4/2026`; the end date supplies the
+year, which the ordinal alone doesn't (`2nd Semester` is Spring of whichever year
+it ended). A card from any other term is **rejected** — last semester's grades
+can't answer this semester's question.
+
+**School** — the card's heading must contain one of the accepted school names.
+Matching ignores case, punctuation and spacing. A card from an unlisted school is
+**flagged for review, not rejected**: it may be a transfer, a concurrent
+enrollment, or simply a heading that didn't read cleanly, and none of those are
+the student's fault.
+
+Every card an applicant submits is checked, not just the first — a student with a
+concurrent-enrollment card alongside their main one has two, and a wrong-term
+second card disqualifies just as a first one would. Either check reports
+*undecided* rather than *failed* when nothing could be read, so an unreadable PDF
+is never mistaken for a rule violation.
+
 ## Setup
 
 ```bash
@@ -50,7 +73,7 @@ npm run dev
 ## Deploying
 
 ```bash
-npm run db:init:remote
+npm run db:init:remote     # idempotent; safe to re-run after a schema change
 npx wrangler pages secret put ADMIN_PASSWORD
 npx wrangler pages secret put SESSION_SECRET
 npm run deploy
@@ -118,6 +141,6 @@ npm test
 ```
 
 Covers the scoring rules (point values, the D/F rule, the best-5 selection, the
-2-course bonus cap) and the CSV parser. One test runs against a real application
+2-course bonus cap), the school and term checks, and the CSV parser. One test runs against a real application
 export if you have one in the project root, and skips otherwise — the export
 itself isn't committed.

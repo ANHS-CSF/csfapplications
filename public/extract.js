@@ -32,6 +32,7 @@ function toLines(items) {
 export async function extractCourses(bytes) {
   const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
   const courses = [];
+  const allLines = [];
   let sawText = false;
   let semester = null;
 
@@ -39,6 +40,7 @@ export async function extractCourses(bytes) {
     const page = await doc.getPage(p);
     const lines = toLines((await page.getTextContent()).items);
     if (lines.length) sawText = true;
+    allLines.push(...lines.map(cells => cells.map(c => c.s).join(' ')));
 
     const headerIdx = lines.findIndex(l => {
       const joined = l.map(c => c.s).join(' ');
@@ -78,5 +80,34 @@ export async function extractCourses(bytes) {
     }
   }
 
-  return { courses, sawText, semester };
+  return { courses, sawText, semester, ...readHeading(allLines) };
+}
+
+// Every Aeries card prints its term as e.g. "2nd Semester Grade Report 1/5/2026
+// 6/4/2026". The end date carries the year, which the ordinal alone does not:
+// "2nd Semester" is Spring of whichever year the term ended.
+const TERM_RE = /\b([1-4])(?:st|nd|rd|th)\s+Semester\s+Grade\s+Report\b(?:\s+(\d{1,2}\/\d{1,2}\/\d{4}))?\s*-?\s*(\d{1,2}\/\d{1,2}\/\d{4})?/i;
+
+function readHeading(lines) {
+  let term = null;
+  for (const line of lines) {
+    const m = line.match(TERM_RE);
+    if (!m) continue;
+    const semesterNo = Number(m[1]);
+    const endDate = m[3] || m[2] || null;
+    term = {
+      semesterNo,
+      // Semester 1 runs Aug-Dec (Fall); semester 2 runs Jan-Jun (Spring).
+      season: semesterNo === 1 ? 'Fall' : 'Spring',
+      year: endDate ? Number(endDate.split('/')[2]) : null,
+      label: `${m[1]}${semesterNo === 1 ? 'st' : 'nd'} Semester${endDate ? ' ending ' + endDate : ''}`,
+    };
+    break;
+  }
+
+  // The school name is the card's first line. Keep a couple of candidates so a
+  // rejected card can tell the reviewer what it actually said.
+  const school = lines.find(l => /\b(school|academy|college)\b/i.test(l)) || null;
+
+  return { term, school, headingLines: lines.slice(0, 6) };
 }
