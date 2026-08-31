@@ -204,6 +204,9 @@ tbody tr.app-row:hover { background: var(--panel-2); }
               <option value="not">Not qualified only</option>
               <option value="flagged">Needs review only</option>
             </select>
+            <select id="reason" class="sm hidden" style="padding:7px 9px; font-size:15px">
+              <option value="any">Any reason</option>
+            </select>
             <button id="export">Export CSV</button>
           </div>
         </header>
@@ -229,12 +232,11 @@ tbody tr.app-row:hover { background: var(--panel-2); }
           <span class="muted" id="rules-count"></span>
           <div class="spacer row">
             <input id="rules-search" type="search" placeholder="Filter courses…" style="width:200px">
-            <button id="rules-add">Add course</button>
           </div>
         </header>
         <p class="muted" style="margin-bottom:12px">
           <b>AP</b> and <b>Honors</b> earn +1 for an A or B (two courses max).
-          <b>Regular</b> counts normally. <b>Inapplicable</b> is excluded entirely — athletics and PE.
+          <b>Regular</b> counts normally. <b>Inapplicable</b> is excluded entirely. Meant for athletics and PE.
           Anything not listed here is treated as Regular and flagged for review.
         </p>
         <div class="scroll">

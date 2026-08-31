@@ -190,27 +190,28 @@ function renderRules() {
   }
 }
 
-function categorySelect(value, onChange) {
+// `value` of null means the course has no rule yet: a placeholder sits in front
+// of the categories so that picking "Regular" — which is what an unlisted course
+// already scores as — still fires a change and writes the rule.
+function categorySelect(value, onChange, placeholder) {
   const sel = document.createElement('select');
   sel.className = 'sm';
-  for (const c of CATEGORIES) {
+  if (placeholder) {
     const o = document.createElement('option');
-    o.value = c; o.textContent = c; o.selected = c === value;
+    o.value = ''; o.textContent = placeholder; o.selected = value == null;
     sel.append(o);
   }
-  sel.onchange = () => onChange(sel.value);
+  for (const c of CATEGORIES) {
+    const o = document.createElement('option');
+    o.value = c; o.textContent = c; o.selected = value != null && c === value;
+    sel.append(o);
+  }
+  sel.onchange = () => { if (sel.value) onChange(sel.value); };
   sel.onclick = e => e.stopPropagation();
   return sel;
 }
 
 $('#rules-search').addEventListener('input', renderRules);
-
-$('#rules-add').addEventListener('click', async () => {
-  const name = prompt('Course name, exactly as it appears on the report card:');
-  if (!name?.trim()) return;
-  await saveRules([{ display: name.trim(), value: 'Regular' }]);
-  renderRules(); rescoreAll();
-});
 
 $('#bulk-save').addEventListener('click', async () => {
   const msg = $('#bulk-msg');
@@ -434,6 +435,26 @@ const statusOf = a => statusFor(a);
 const needsReview = a =>
   a.problems.length > 0 || (a.unknown?.length ?? 0) > 0 || statusOf(a) === 'NEEDS REVIEW';
 
+// The distinct things that can put an applicant in the review pile. One
+// applicant can land in several buckets, so this is a set, not a single label.
+const REVIEW_REASONS = [
+  ['term', 'Wrong semester'],
+  ['school', 'Unrecognized school'],
+  ['file', 'Unreadable report card'],
+  ['nocourses', 'No courses found'],
+  ['unlisted', 'Course not in rules'],
+];
+
+function reasonsFor(a) {
+  const set = new Set();
+  if (a.check?.termOk === false) set.add('term');
+  if (a.check?.schoolOk === false) set.add('school');
+  if (a.problems.length) set.add('file');
+  if (a.result?.flags?.includes('no-courses')) set.add('nocourses');
+  if (a.unknown?.length) set.add('unlisted');
+  return set;
+}
+
 function renderResults() {
   const q = ($('#search').value || '').toLowerCase();
   const mode = $('#filter').value;
@@ -460,11 +481,16 @@ function renderResults() {
     note.textContent = `${flagged} applicant(s) need a look — an unreadable card, the wrong semester, an unrecognized school, or a course that isn't in the course rules. Filter to "Needs review only" to work through them.`;
   }
 
+  const reason = renderReasonFilter(all, mode);
+
   const shown = all.filter(a => {
     if (q && !a.name.toLowerCase().includes(q)) return false;
     if (mode === 'qualified') return statusOf(a) === 'QUALIFIED';
     if (mode === 'not') return statusOf(a) === 'NOT QUALIFIED';
-    if (mode === 'flagged') return needsReview(a);
+    if (mode === 'flagged') {
+      if (!needsReview(a)) return false;
+      return reason === 'any' || reasonsFor(a).has(reason);
+    }
     return true;
   });
 
@@ -560,10 +586,11 @@ function detailRow(a) {
     row.append(tdGrade);
 
     const tdCat = document.createElement('td');
-    tdCat.append(categorySelect(course.category, async next => {
+    const known = isKnown(course.name);
+    tdCat.append(categorySelect(known ? course.category : null, async next => {
       await saveRules([{ display: course.name, value: next }]);
       renderRules(); rescoreAll();
-    }));
+    }, known ? null : '— add to rules as… —'));
     row.append(tdCat);
 
     const tdPts = document.createElement('td');
@@ -626,8 +653,41 @@ function detailRow(a) {
   return tr;
 }
 
+// Second-level filter, only meaningful inside the review pile. Rebuilt on every
+// render so the counts follow the data, and so a reason that no longer applies
+// (the last unlisted course got classified) cannot leave the table empty.
+function renderReasonFilter(all, mode) {
+  const sel = $('#reason');
+  sel.classList.toggle('hidden', mode !== 'flagged');
+  if (mode !== 'flagged') return 'any';
+
+  const flagged = all.filter(needsReview);
+  const counts = new Map(REVIEW_REASONS.map(([key]) => [key, 0]));
+  for (const a of flagged) {
+    for (const key of reasonsFor(a)) counts.set(key, counts.get(key) + 1);
+  }
+
+  const available = REVIEW_REASONS.filter(([key]) => counts.get(key) > 0);
+  const wanted = available.some(([key]) => key === sel.value) ? sel.value : 'any';
+
+  sel.textContent = '';
+  const any = document.createElement('option');
+  any.value = 'any'; any.textContent = `Any reason (${flagged.length})`;
+  any.selected = wanted === 'any';
+  sel.append(any);
+  for (const [key, label] of available) {
+    const o = document.createElement('option');
+    o.value = key; o.textContent = `${label} (${counts.get(key)})`;
+    o.selected = key === wanted;
+    sel.append(o);
+  }
+  sel.value = wanted;
+  return wanted;
+}
+
 $('#search').addEventListener('input', renderResults);
 $('#filter').addEventListener('change', renderResults);
+$('#reason').addEventListener('change', renderResults);
 
 /* -------------------------------------------------------------- export --- */
 
