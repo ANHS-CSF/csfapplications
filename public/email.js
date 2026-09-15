@@ -8,7 +8,7 @@ import { reasonsFor, notesFor, REASON_LABEL } from './review.js';
 // Shown as clickable chips in the compose panel, so this list is the
 // documentation as well as the implementation.
 export const TEMPLATE_VARS = [
-  ['name', 'Full name as submitted'],
+  ['name', 'Full name, in reading order'],
   ['first', 'First name only'],
   ['email', 'Their email address'],
   ['studentId', 'Student ID'],
@@ -26,18 +26,42 @@ export const TEMPLATE_VARS = [
 
 export const VAR_NAMES = new Set(TEMPLATE_VARS.map(([k]) => k));
 
+// Rosters hand out names as "Last, First Middle" — the Google Forms export and
+// Aeries both do it, and some surnames are two words ("Bacellar Ahmadi, Lucas").
+// Splitting on whitespace would greet that student as "Hi Bacellar", so the
+// comma decides which half is which. Without a comma the name is already in
+// reading order.
+export function splitName(raw) {
+  const full = String(raw ?? '').trim();
+  if (!full) return { natural: '', first: '' };
+
+  const comma = full.indexOf(',');
+  if (comma === -1) return { natural: full, first: full.split(/\s+/)[0] };
+
+  const last = full.slice(0, comma).trim();
+  const given = full.slice(comma + 1).trim();
+  return {
+    // A trailing comma with nothing after it leaves the surname standing alone,
+    // which is still better than an empty greeting.
+    natural: [given, last].filter(Boolean).join(' '),
+    first: given.split(/[\s,]+/).filter(Boolean)[0] || last,
+  };
+}
+
 // `settings` supplies the one value that does not come from the applicant: the
 // term the chapter is asking for. It matters most in exactly the case where the
 // card could not be read, so {term} is empty and {requiredTerm} is all you have.
 export function varsFor(a, settings = {}) {
   const status = statusFor(a);
   const required = settings.requiredTerm;
+  const { natural, first } = splitName(a.name);
   const reasons = [...reasonsFor(a)].map(k => REASON_LABEL.get(k) ?? k);
   return {
-    name: a.name ?? '',
-    // Falls back to the whole name rather than an empty greeting, which is the
-    // failure a reader would actually notice.
-    first: String(a.name ?? '').trim().split(/\s+/)[0] || (a.name ?? ''),
+    // Reading order, not the roster's "Last, First": these go into a sentence
+    // addressed to the student. The table still shows the name as submitted, so
+    // a reviewer can match it against the CSV.
+    name: natural,
+    first,
     email: a.email ?? '',
     studentId: a.studentId ?? '',
     level: a.level ?? '',

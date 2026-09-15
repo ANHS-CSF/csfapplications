@@ -1,6 +1,6 @@
 import { scoreApplicant, normalizeGrade, parseCsv, toCsv, checkSubmission, statusFor, DEFAULT_SETTINGS } from '../public/scoring.js';
 import { reasonsFor, needsReview, notesFor, REASON_LABEL } from '../public/review.js';
-import { renderTemplate, renderMessage, varsFor } from '../public/email.js';
+import { renderTemplate, renderMessage, varsFor, splitName } from '../public/email.js';
 import { readFileSync, existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
@@ -248,6 +248,32 @@ t('placeholders are filled per recipient', () => {
 });
 t('a one-word name still yields a first name', () => {
   assert.equal(varsFor(applicant({ name: 'Prince' })).first, 'Prince');
+});
+t('a roster "Last, First" name is not greeted by its surname', () => {
+  // The real shape of the Google Forms export, and a two-word surname at that:
+  // splitting on whitespace would have addressed this student as "Bacellar".
+  const v = varsFor(applicant({ name: 'Bacellar Ahmadi, Lucas' }));
+  assert.equal(v.first, 'Lucas');
+  assert.equal(v.name, 'Lucas Bacellar Ahmadi');
+});
+t('a two-word given name takes only the first word', () => {
+  const v = varsFor(applicant({ name: 'Nguyen, Anh Thu' }));
+  assert.equal(v.first, 'Anh');
+  assert.equal(v.name, 'Anh Thu Nguyen');
+});
+t('a name already in reading order is left alone', () => {
+  const v = varsFor(applicant({ name: 'Lucas Bacellar Ahmadi' }));
+  assert.equal(v.first, 'Lucas');
+  assert.equal(v.name, 'Lucas Bacellar Ahmadi');
+});
+t('a half-typed name never produces an empty greeting', () => {
+  assert.equal(splitName('Smith,').first, 'Smith');
+  assert.equal(splitName(', Lucas').first, 'Lucas');
+  assert.equal(splitName('Smith, John, Jr').first, 'John');
+});
+t('a blank name yields blanks rather than throwing', () => {
+  assert.deepEqual(splitName('   '), { natural: '', first: '' });
+  assert.deepEqual(splitName(undefined), { natural: '', first: '' });
 });
 t('an unknown placeholder is reported and left alone, never blanked', () => {
   const out = renderTemplate('Hi {frist}', varsFor(applicant()));

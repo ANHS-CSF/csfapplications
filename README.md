@@ -152,35 +152,54 @@ Available placeholders: `{name}` `{first}` `{email}` `{studentId}` `{level}`
 asks for. Use `{requiredTerm}` when telling someone what to resend — if their
 card couldn't be read, `{term}` is empty by definition.
 
+`{name}` and `{first}` understand the roster's `Last, First Middle` format, so
+`Bacellar Ahmadi, Lucas` greets as *Lucas*, not *Bacellar*, and `{name}` renders
+in reading order. The Results table still shows the name exactly as the CSV has
+it, so it stays easy to match against the export.
+
 ### Connecting Gmail
 
-`gmail.send` is a Google *restricted* scope, and that shapes the setup:
-
-> **Use a Google Workspace account and set the consent screen to Internal.** An
-> External consent screen left in *Testing* expires its refresh token after 7
-> days, so you would have to reconnect every week. Publishing an External app
-> with a restricted scope requires a Google security assessment.
+`gmail.send` is a Google *restricted* scope, which makes one step in the setup
+non-obvious — do not skip step 4.
 
 1. In the [Google Cloud Console](https://console.cloud.google.com), create a
    project and enable the **Gmail API**.
-2. Configure the OAuth consent screen as **Internal**, and add the scope
+2. Under **APIs & Services → OAuth consent screen**, set the audience to
+   **External** (the only option for an `@gmail.com` account; a Workspace
+   account may use **Internal** instead and can skip step 4). Add the scope
    `https://www.googleapis.com/auth/gmail.send`.
 3. Create an **OAuth client ID** of type *Web application* with these authorized
-   redirect URIs:
-   - `https://<your-pages-domain>/api/gmail/callback`
+   redirect URIs — add all three, since the callback has to match whichever
+   host the reviewer is actually on:
+   - `https://apps.anhscsf.com/api/gmail/callback`
+   - `https://csfeligibility.pages.dev/api/gmail/callback`
    - `http://localhost:8788/api/gmail/callback` (for `npm run dev`)
-4. Store the credentials:
+4. **Click "Publish app" so the status reads *In production*.** An External app
+   left in *Testing* expires its refresh token after **7 days**, so sending
+   would break every week. Publishing does not require verification: because
+   `gmail.send` is restricted, Google shows an *unverified app* warning on the
+   consent screen — click **Advanced → Go to (unsafe)** to proceed. Verification
+   only matters for distributing the app to strangers, and the 100-user cap on
+   unverified apps is irrelevant for one adviser's mailbox.
+5. Store the credentials:
 
 ```bash
 npx wrangler pages secret put GOOGLE_CLIENT_ID
 npx wrangler pages secret put GOOGLE_CLIENT_SECRET
 ```
 
-5. Open **Settings → Gmail → Connect Gmail** and complete the consent screen.
+6. Open **Settings → Gmail → Connect Gmail** and complete the consent screen.
 
 For local development, add the same two values to `.dev.vars`. Until they are
 set, the Gmail card reads *Not set up* and sending stays disabled — nothing else
 in the portal is affected.
+
+A published app's refresh token persists, but it is not immortal. It dies if the
+account's Google password is changed, if access is revoked at
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions), or
+if nothing sends for six months. The portal handles all of these the same way:
+sending stops with *Reconnect Gmail* rather than a cryptic failure, and one
+trip through step 6 fixes it.
 
 The refresh token is sealed with AES-GCM under a key derived from
 `SESSION_SECRET` before it goes into D1, so rotating `SESSION_SECRET` also
