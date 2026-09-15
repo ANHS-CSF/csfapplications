@@ -1,6 +1,8 @@
 // Wiring for the eligibility portal: auth, CSV intake, batch extraction, review.
 import { parseCsv, toCsv, scoreApplicant, normalizeGrade, checkSubmission, statusFor, DEFAULT_SETTINGS } from './scoring.js';
 import { extractCourses } from './extract.js';
+import { REVIEW_REASONS, REASON_LABEL, reasonsFor, needsReview, notesFor } from './review.js';
+import { TEMPLATE_VARS, renderMessage } from './email.js';
 
 const $ = sel => document.querySelector(sel);
 const CATEGORIES = ['AP', 'Honors', 'Regular', 'Inapplicable'];
@@ -14,6 +16,11 @@ const state = {
   applicants: [],    // scored results
   rules: new Map(),  // normalized course name -> { display, value }
   settings: { ...DEFAULT_SETTINGS },
+  shown: [],         // applicants the table is currently displaying
+  templates: [],     // saved message templates
+  gmail: { configured: false, connected: false, email: null },
+  contacted: new Set(),  // lowercased addresses already in the send log
+  picks: new Map(),      // applicant index -> included in this send
 };
 
 /* ------------------------------------------------------------- session --- */
@@ -53,6 +60,10 @@ async function enterApp() {
   $('#login-view').classList.add('hidden');
   $('#app-view').classList.remove('hidden');
   await Promise.all([loadRules(), loadSettings()]);
+  // Email setup is not needed to score anyone, so a failure here (no Gmail
+  // client configured yet, say) must not keep the portal from opening.
+  await Promise.all([loadGmail(), loadTemplates(), loadLog()]).catch(() => {});
+  reportOauthOutcome();
 }
 
 (async function boot() {
@@ -377,7 +388,7 @@ async function processApplicant(job) {
       const res = await fetch(`/api/pdf?url=${encodeURIComponent(link)}`, { credentials: 'same-origin' });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        problems.push(body.error || `Download failed (${res.status})`);
+        problems.push({ code: 'download', text: body.error || `Download failed (${res.status})` });
         continue;
       }
       const bytes = new Uint8Array(await res.arrayBuffer());
@@ -386,13 +397,15 @@ async function processApplicant(job) {
       if (out.term) terms.push(out.term);
 
       if (!out.courses.length) {
+        // Two very different failures that used to read as one. The distinction
+        // matters: a wrong document needs a different email than a screenshot.
         problems.push(out.sawText
-          ? 'No Aeries grade table found — wrong document?'
-          : 'PDF has no readable text (a screenshot?) — enter grades by hand');
+          ? { code: 'no-grade-table', text: 'No Aeries grade table found — wrong document?' }
+          : { code: 'no-text', text: 'PDF has no readable text (a screenshot?) — enter grades by hand' });
       }
       courses.push(...out.courses);
     } catch (e) {
-      problems.push(e.message || 'Could not read this PDF');
+      problems.push({ code: 'read-error', text: e.message || 'Could not read this PDF' });
     }
   }
 
@@ -414,46 +427,10 @@ function rescoreAll() {
   renderResults();
 }
 
-function notesFor(a) {
-  const notes = [...a.problems];
-  if (a.check?.termReason) notes.push(a.check.termReason);
-  if (a.check?.schoolReason) notes.push(a.check.schoolReason);
-  if (a.unknown?.length) notes.push(`${a.unknown.length} unlisted course${a.unknown.length > 1 ? 's' : ''}`);
-  if (a.links.length > 1) notes.push('two cards merged');
-  if (/fresh/i.test(a.level)) notes.push('freshman — cannot apply');
-  if (a.result?.reason) notes.push(a.result.reason);
-  if (a.result?.flags?.length) notes.push(...a.result.flags.filter(f => f !== 'D/F' && f !== 'no-courses'));
-  return notes;
-}
-
 // One status decision, used by both the table and the export, so they cannot
-// disagree. The rule itself lives in scoring.js where it is unit-tested.
+// disagree. The rule itself lives in scoring.js where it is unit-tested; the
+// review taxonomy (needsReview, reasonsFor, notesFor) lives in review.js.
 const statusOf = a => statusFor(a);
-
-// Wants a human's attention, which is broader than the status: an applicant can
-// be comfortably QUALIFIED and still have an unlisted course worth classifying.
-const needsReview = a =>
-  a.problems.length > 0 || (a.unknown?.length ?? 0) > 0 || statusOf(a) === 'NEEDS REVIEW';
-
-// The distinct things that can put an applicant in the review pile. One
-// applicant can land in several buckets, so this is a set, not a single label.
-const REVIEW_REASONS = [
-  ['term', 'Wrong semester'],
-  ['school', 'Unrecognized school'],
-  ['file', 'Unreadable report card'],
-  ['nocourses', 'No courses found'],
-  ['unlisted', 'Course not in rules'],
-];
-
-function reasonsFor(a) {
-  const set = new Set();
-  if (a.check?.termOk === false) set.add('term');
-  if (a.check?.schoolOk === false) set.add('school');
-  if (a.problems.length) set.add('file');
-  if (a.result?.flags?.includes('no-courses')) set.add('nocourses');
-  if (a.unknown?.length) set.add('unlisted');
-  return set;
-}
 
 function renderResults() {
   const q = ($('#search').value || '').toLowerCase();
@@ -494,6 +471,9 @@ function renderResults() {
     return true;
   });
 
+  // Remembered so the compose panel can offer "just what's in the table".
+  state.shown = shown;
+
   const tbody = $('#rows');
   tbody.textContent = '';
   for (const a of shown) {
@@ -532,7 +512,22 @@ function applicantRow(a) {
   push(pill);
 
   const notes = notesFor(a);
-  push(notes.join(' · '), 'muted');
+  if (wasEmailed(a)) {
+    const cell = document.createElement('span');
+    const sent = document.createElement('span');
+    sent.className = 'pill ok';
+    sent.textContent = 'Emailed';
+    cell.append(sent);
+    if (notes.length) {
+      const rest = document.createElement('span');
+      rest.className = 'muted';
+      rest.textContent = ' ' + notes.join(' · ');
+      cell.append(rest);
+    }
+    push(cell);
+  } else {
+    push(notes.join(' · '), 'muted');
+  }
 
   const link = document.createElement('a');
   link.href = a.links[0] || '#'; link.target = '_blank'; link.rel = 'noopener noreferrer';
@@ -645,7 +640,7 @@ function detailRow(a) {
     const warn = document.createElement('p');
     warn.className = 'note';
     warn.style.marginBottom = '10px';
-    warn.textContent = a.problems.join(' · ');
+    warn.textContent = a.problems.map(p => p.text).join(' · ');
     td.append(warn);
   }
   td.append(summary, table, add);
@@ -688,6 +683,525 @@ function renderReasonFilter(all, mode) {
 $('#search').addEventListener('input', renderResults);
 $('#filter').addEventListener('change', renderResults);
 $('#reason').addEventListener('change', renderResults);
+
+/* --------------------------------------------------------------- email --- */
+
+const validEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v ?? '').trim());
+const wasEmailed = a => !!a.emailed || state.contacted.has(String(a.email ?? '').trim().toLowerCase());
+
+// Gmail's own per-user limits are generous, but a Worker request may only make
+// 50 subrequests on the free plan and each send is one, so a batch is split
+// across several calls. 20 leaves headroom for the token refresh.
+const CHUNK = 20;
+
+async function loadGmail() {
+  try {
+    state.gmail = await api('/api/gmail');
+  } catch {
+    state.gmail = { configured: false, connected: false, email: null };
+  }
+  renderGmail();
+}
+
+async function loadTemplates() {
+  const { templates } = await api('/api/templates');
+  state.templates = templates;
+  renderTemplateList();
+}
+
+async function loadLog() {
+  const { log } = await api('/api/gmail/log?limit=200');
+  state.contacted = new Set(
+    log.filter(r => r.status === 'sent').map(r => String(r.email).trim().toLowerCase())
+  );
+  renderLog(log);
+}
+
+function renderGmail() {
+  const { configured, connected, email } = state.gmail;
+  const status = $('#gmail-status');
+  const note = $('#gmail-note');
+
+  $('#gmail-connect').classList.toggle('hidden', connected);
+  $('#gmail-connect').disabled = !configured;
+  $('#gmail-disconnect').classList.toggle('hidden', !connected);
+
+  status.textContent = !configured ? 'Not set up'
+    : connected ? `Connected as ${email || 'unknown account'}` : 'Not connected';
+
+  note.classList.toggle('hidden', configured);
+  if (!configured) {
+    note.textContent =
+      'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not set on this deployment. ' +
+      'Add them with `wrangler pages secret put` before connecting an account.';
+  }
+}
+
+function renderLog(log) {
+  const tbody = $('#log-rows');
+  tbody.textContent = '';
+  $('#log-empty').classList.toggle('hidden', log.length > 0);
+
+  for (const r of log) {
+    const tr = document.createElement('tr');
+    for (const [text, cls] of [
+      [new Date(r.sent_at).toLocaleString(), 'muted'],
+      [r.name || '', ''],
+      [r.email, 'mono muted'],
+      [r.subject || '', 'muted'],
+    ]) {
+      const td = document.createElement('td');
+      if (cls) td.className = cls;
+      td.textContent = text;
+      tr.append(td);
+    }
+    const td = document.createElement('td');
+    const pill = document.createElement('span');
+    pill.className = 'pill ' + (r.status === 'sent' ? 'ok' : 'no');
+    pill.textContent = r.status === 'sent' ? 'Sent' : 'Failed';
+    pill.title = r.error || '';
+    td.append(pill);
+    tr.append(td);
+    tbody.append(tr);
+  }
+}
+
+$('#log-refresh').addEventListener('click', () => {
+  loadLog().then(renderResults).catch(e => alert(e.message));
+});
+
+$('#gmail-connect').addEventListener('click', () => {
+  // A plain navigation rather than fetch: the session cookie is SameSite=Strict,
+  // which a same-site top-level navigation still carries, and Google's consent
+  // screen has to be driven by the browser anyway.
+  location.href = '/api/gmail/connect';
+});
+
+$('#gmail-disconnect').addEventListener('click', async () => {
+  if (!confirm('Disconnect Gmail? You will have to authorize the account again to send.')) return;
+  try {
+    await api('/api/gmail', { method: 'DELETE' });
+    await loadGmail();
+  } catch (e) { alert(e.message); }
+});
+
+// The OAuth callback can only talk back through the URL, so translate its
+// verdict once and then scrub it — a stale ?gmail=error surviving a refresh
+// would look like a fresh failure.
+function reportOauthOutcome() {
+  const params = new URLSearchParams(location.search);
+  const outcome = params.get('gmail');
+  if (!outcome) return;
+
+  const detail = params.get('detail');
+  const messages = {
+    connected: null,
+    denied: 'Gmail was not connected: the authorization was declined.',
+    state: 'Gmail was not connected: that sign-in did not match this session. Try again.',
+    error: `Gmail was not connected. ${detail || ''}`.trim(),
+  };
+  const message = messages[outcome] ?? null;
+  if (message) alert(message);
+  history.replaceState(null, '', location.pathname);
+}
+
+/* ------------------------------------------------------ compose: audience --- */
+
+// Each entry is [key, label, predicate]. Reason buckets come straight from the
+// review taxonomy, so a new reason shows up here without any extra wiring.
+function audiences() {
+  const inShown = new Set(state.shown);
+  return [
+    ['review', 'Everyone needing review', needsReview],
+    ...REVIEW_REASONS.map(([key, label]) =>
+      [`reason:${key}`, `Needs review · ${label}`, a => needsReview(a) && reasonsFor(a).has(key)]),
+    ['qualified', 'Qualified applicants', a => statusOf(a) === 'QUALIFIED'],
+    ['not', 'Not qualified applicants', a => statusOf(a) === 'NOT QUALIFIED'],
+    ['shown', "Whatever the table is showing right now", a => inShown.has(a)],
+    ['all', 'Everyone in the CSV', () => true],
+  ];
+}
+
+const audienceFor = key => audiences().find(([k]) => k === key);
+
+function renderAudiences() {
+  const sel = $('#email-audience');
+  const all = state.applicants.filter(Boolean);
+  const list = audiences();
+
+  // A bucket nobody is in would only produce an empty recipient list, so it is
+  // dropped — the same reason the table's reason filter drops empty reasons.
+  const usable = list.filter(([key, , match]) =>
+    key === 'shown' || key === 'all' || all.some(match));
+
+  const wanted = usable.some(([k]) => k === sel.value) ? sel.value : (usable[0]?.[0] ?? 'all');
+  sel.textContent = '';
+  for (const [key, label, match] of usable) {
+    const o = document.createElement('option');
+    o.value = key;
+    o.textContent = `${label} (${all.filter(match).length})`;
+    sel.append(o);
+  }
+  sel.value = wanted;
+  return wanted;
+}
+
+function recipients() {
+  const entry = audienceFor($('#email-audience').value);
+  const match = entry?.[2] ?? (() => false);
+  return state.applicants.filter(Boolean).filter(match);
+}
+
+/* ------------------------------------------------------ compose: panel --- */
+
+$('#compose').addEventListener('click', openCompose);
+$('#email-close').addEventListener('click', () => $('#email-panel').classList.add('hidden'));
+$('#email-panel').addEventListener('click', e => {
+  if (e.target === $('#email-panel')) $('#email-panel').classList.add('hidden');
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') $('#email-panel').classList.add('hidden');
+});
+
+function openCompose() {
+  if (!state.applicants.filter(Boolean).length) {
+    alert('Run a batch first — there is nobody to email yet.');
+    return;
+  }
+  $('#email-panel').classList.remove('hidden');
+  $('#email-result').classList.add('hidden');
+  $('#email-retry').classList.add('hidden');
+  $('#email-bar-wrap').classList.add('hidden');
+
+  renderVarChips();
+  renderAudiences();
+  if (!$('#email-subject').value && !$('#email-body').value) applyTemplate($('#email-template').value);
+  resetPicks();
+  renderCompose();
+}
+
+function renderVarChips() {
+  const box = $('#email-vars');
+  if (box.childElementCount) return;
+  for (const [key, help] of TEMPLATE_VARS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `{${key}}`;
+    b.title = help;
+    b.onclick = () => insertVar(`{${key}}`);
+    box.append(b);
+  }
+}
+
+// Inserts at the caret in whichever of the two fields was last focused, so the
+// chips work for the subject as well as the body.
+let lastField = null;
+for (const id of ['#email-subject', '#email-body']) {
+  $(id).addEventListener('focus', e => { lastField = e.target; });
+  $(id).addEventListener('input', renderCompose);
+}
+
+function insertVar(token) {
+  const el = lastField ?? $('#email-body');
+  const at = el.selectionStart ?? el.value.length;
+  const to = el.selectionEnd ?? at;
+  el.value = el.value.slice(0, at) + token + el.value.slice(to);
+  el.focus();
+  el.selectionStart = el.selectionEnd = at + token.length;
+  renderCompose();
+}
+
+/* --------------------------------------------------- compose: templates --- */
+
+function renderTemplateList() {
+  const sel = $('#email-template');
+  const keep = sel.value;
+  sel.textContent = '';
+
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = state.templates.length ? '— pick a template —' : '— no saved templates —';
+  sel.append(blank);
+
+  for (const t of state.templates) {
+    const o = document.createElement('option');
+    o.value = t.name;
+    o.textContent = t.name;
+    sel.append(o);
+  }
+  sel.value = state.templates.some(t => t.name === keep) ? keep : '';
+}
+
+function applyTemplate(name) {
+  const t = state.templates.find(x => x.name === name);
+  if (!t) return;
+  $('#email-subject').value = t.subject;
+  $('#email-body').value = t.body;
+  renderCompose();
+}
+
+$('#email-template').addEventListener('change', e => applyTemplate(e.target.value));
+
+async function saveTemplate(name) {
+  if (!name) return;
+  try {
+    await api('/api/templates', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template: { name, subject: $('#email-subject').value, body: $('#email-body').value },
+      }),
+    });
+    await loadTemplates();
+    $('#email-template').value = name;
+  } catch (e) { alert(e.message); }
+}
+
+$('#email-save').addEventListener('click', () => {
+  const current = $('#email-template').value;
+  saveTemplate(current || prompt('Name this template:', '')?.trim());
+});
+
+$('#email-save-as').addEventListener('click', () => {
+  saveTemplate(prompt('Name for the new template:', '')?.trim());
+});
+
+$('#email-delete').addEventListener('click', async () => {
+  const name = $('#email-template').value;
+  if (!name) { alert('Pick a saved template first.'); return; }
+  if (!confirm(`Delete the "${name}" template?`)) return;
+  try {
+    await api(`/api/templates?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+    await loadTemplates();
+  } catch (e) { alert(e.message); }
+});
+
+/* -------------------------------------------------- compose: recipients --- */
+
+// Anyone without a usable address, or already contacted, starts unchecked. Both
+// stay visible and re-checkable: the reviewer, not the app, decides who is a
+// duplicate.
+function resetPicks() {
+  state.picks = new Map();
+  for (const a of recipients()) {
+    state.picks.set(a.index, validEmail(a.email) && !wasEmailed(a));
+  }
+}
+
+$('#email-audience').addEventListener('change', () => { resetPicks(); renderCompose(); });
+$('#email-all').addEventListener('click', () => {
+  for (const a of recipients()) if (validEmail(a.email)) state.picks.set(a.index, true);
+  renderCompose();
+});
+$('#email-none').addEventListener('click', () => {
+  for (const key of state.picks.keys()) state.picks.set(key, false);
+  renderCompose();
+});
+
+const chosen = () => recipients().filter(a => state.picks.get(a.index) && validEmail(a.email));
+
+function renderCompose() {
+  renderPicks();
+  renderSummary();
+}
+
+function renderPicks() {
+  const list = recipients();
+  const picks = $('#email-picks');
+  picks.textContent = '';
+
+  for (const a of list) {
+    const row = document.createElement('label');
+    row.className = 'pick';
+
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    const usable = validEmail(a.email);
+    box.checked = usable && !!state.picks.get(a.index);
+    box.disabled = !usable;
+    // Only the counts and the preview depend on this, so the list itself is
+    // left alone — rebuilding it would drop focus mid-way through tabbing
+    // down a long list of checkboxes.
+    box.onchange = () => { state.picks.set(a.index, box.checked); renderSummary(); };
+
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = a.name;
+
+    const addr = document.createElement('span');
+    addr.className = 'mono muted';
+    addr.textContent = usable ? a.email : (a.email ? `${a.email} — not an address` : 'no email in the CSV');
+
+    const why = document.createElement('span');
+    why.className = 'why';
+    const labels = [...reasonsFor(a)].map(k => REASON_LABEL.get(k) ?? k);
+    if (wasEmailed(a)) labels.unshift('already emailed');
+    why.textContent = labels.join(' · ');
+
+    if (!usable) row.classList.add('off');
+    row.append(box, who, addr, why);
+    picks.append(row);
+  }
+}
+
+function renderSummary() {
+  const list = recipients();
+  const picked = chosen();
+  const skipped = list.length - picked.length;
+  $('#email-count').textContent =
+    `${picked.length} of ${list.length} selected` + (skipped ? ` · ${skipped} skipped` : '');
+
+  renderPreview(picked[0]);
+
+  const ready = picked.length > 0
+    && state.gmail.connected
+    && !!$('#email-subject').value.trim()
+    && !!$('#email-body').value.trim();
+  $('#email-send').disabled = !ready;
+  $('#email-send').textContent = picked.length
+    ? `Send to ${picked.length} applicant${picked.length > 1 ? 's' : ''}`
+    : 'Send';
+
+  const warn = $('#email-gmail-warn');
+  warn.classList.toggle('hidden', state.gmail.connected);
+  if (!state.gmail.connected) {
+    warn.textContent = state.gmail.configured
+      ? 'No Gmail account is connected. Connect one on the Settings tab first.'
+      : 'Gmail is not set up on this deployment yet — see the Gmail card on the Settings tab.';
+  }
+  $('#email-sender').textContent = state.gmail.connected ? `Sending as ${state.gmail.email}` : '';
+}
+
+function renderPreview(a) {
+  const box = $('#email-preview');
+  const unknownNote = $('#email-unknown');
+  box.textContent = '';
+
+  if (!a) {
+    box.textContent = 'Nobody selected.';
+    unknownNote.classList.add('hidden');
+    $('#email-preview-who').textContent = '';
+    return;
+  }
+
+  const { subject, body, unknown } = renderMessage(
+    { subject: $('#email-subject').value, body: $('#email-body').value }, a, state.settings
+  );
+
+  $('#email-preview-who').textContent = `as ${a.name} will see it`;
+  const subj = document.createElement('span');
+  subj.className = 'subj';
+  subj.textContent = subject || '(no subject)';
+  box.append(subj, document.createTextNode(body));
+
+  unknownNote.classList.toggle('hidden', !unknown.length);
+  if (unknown.length) {
+    unknownNote.textContent =
+      `Not a variable, so it will be sent literally: ${unknown.map(u => `{${u}}`).join(', ')}. ` +
+      'Check the spelling against the list above.';
+  }
+}
+
+/* -------------------------------------------------------- compose: send --- */
+
+$('#email-send').addEventListener('click', () => sendBatch(chosen()));
+$('#email-retry').addEventListener('click', e => sendBatch(e.target._failed ?? []));
+
+async function sendBatch(list) {
+  if (!list.length) return;
+
+  const audience = $('#email-audience').selectedOptions[0]?.textContent ?? '';
+  const template = $('#email-template').value;
+  const subject = $('#email-subject').value;
+  const body = $('#email-body').value;
+
+  if (!confirm(`Send this message to ${list.length} applicant(s)? This cannot be undone.`)) return;
+
+  const send = $('#email-send');
+  send.disabled = true;
+  $('#email-retry').classList.add('hidden');
+  $('#email-bar-wrap').classList.remove('hidden');
+  $('#email-bar').style.width = '0%';
+
+  const byEmail = new Map(list.map(a => [String(a.email).trim().toLowerCase(), a]));
+  const messages = list.map(a => {
+    const rendered = renderMessage({ subject, body }, a, state.settings);
+    return {
+      email: String(a.email).trim(),
+      name: a.name,
+      studentId: a.studentId,
+      subject: rendered.subject,
+      body: rendered.body,
+    };
+  });
+
+  const failures = [];
+  let sent = 0, stopped = null;
+
+  for (let i = 0; i < messages.length; i += CHUNK) {
+    const slice = messages.slice(i, i + CHUNK);
+    let out;
+    try {
+      out = await api('/api/gmail/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audience, template, messages: slice }),
+      });
+    } catch (e) {
+      // The whole chunk is unaccounted for. Stop rather than press on: if the
+      // token died, every later chunk fails the same way.
+      stopped = e.message;
+      for (const m of slice) failures.push({ email: m.email, error: e.message });
+      break;
+    }
+
+    for (const r of out.results) {
+      const a = byEmail.get(String(r.email).trim().toLowerCase());
+      if (r.ok) {
+        sent++;
+        state.contacted.add(String(r.email).trim().toLowerCase());
+        if (a) a.emailed = true;
+      } else {
+        failures.push({ email: r.email, error: r.error });
+      }
+    }
+
+    $('#email-bar').style.width =
+      Math.round(Math.min(i + CHUNK, messages.length) / messages.length * 100) + '%';
+
+    if (out.reconnect) {
+      stopped = 'Gmail needs reconnecting — the rest of the batch was not attempted.';
+      break;
+    }
+  }
+
+  send.disabled = false;
+  renderResults();
+  renderCompose();
+
+  const result = $('#email-result');
+  result.classList.remove('hidden');
+  result.className = failures.length ? 'note' : 'ok-note';
+  result.textContent = [
+    `${sent} sent`,
+    failures.length ? `${failures.length} failed` : '',
+    stopped || '',
+  ].filter(Boolean).join(' · ');
+
+  if (failures.length) {
+    result.textContent += '\n' + failures.map(f => `${f.email}: ${f.error}`).join('\n');
+    result.style.whiteSpace = 'pre-wrap';
+    const retry = $('#email-retry');
+    const stillThere = new Set(failures.map(f => String(f.email).trim().toLowerCase()));
+    retry._failed = list.filter(a => stillThere.has(String(a.email).trim().toLowerCase()));
+    retry.classList.remove('hidden');
+  }
+
+  // The server wrote log rows for every attempt; pull them so the Settings tab
+  // and the "already emailed" marks agree with what just happened.
+  loadLog().catch(() => {});
+  if (state.gmail.connected && stopped) loadGmail().catch(() => {});
+}
 
 /* -------------------------------------------------------------- export --- */
 

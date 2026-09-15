@@ -44,7 +44,9 @@ is the point: *Not qualified* means the card was read and the points fall short,
 while *Needs review* means it couldn't be judged fairly yet. A wrong-semester
 upload, an unrecognized school and an unreadable PDF are all fixable with an
 email and a resubmission, so none of them are allowed to read as an academic
-failure. Filter to **Needs review only** to get the list to email.
+failure. Filter to **Needs review only** to work through them, or use
+[**Email applicants**](#emailing-applicants) to ask the whole bucket for a
+resubmission at once.
 
 Every card an applicant submits is checked, not just the first — a student with a
 concurrent-enrollment card alongside their main one has two, and a wrong-term
@@ -56,7 +58,7 @@ is never mistaken for a rule violation.
 
 ```bash
 npm install
-npx wrangler d1 create csf     # put the printed database_id into wrangler.toml
+npm run db:create              # put the printed database_id into wrangler.toml
 npm run db:init                # local database: schema + course seed
 ```
 
@@ -65,6 +67,9 @@ Create `.dev.vars` for local development:
 ```
 ADMIN_PASSWORD=pick-something
 SESSION_SECRET=any-long-random-string
+# Only needed to send email; see "Connecting Gmail" below.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
 ```
 
 Then:
@@ -126,11 +131,77 @@ lines. Reclassifying a course from an applicant's detail view saves it to D1 too
 so the next batch picks it up. Any course not in the table is treated as
 `Regular` and flagged for review.
 
+## Emailing applicants
+
+**Email…** on the Results card opens a compose panel that sends personalized mail
+through the Gmail API, as the connected account, with copies landing in its Sent
+folder.
+
+Pick an audience — everyone needing review, or one specific reason such as *No
+Aeries grade table* — write the message once with `{name}`-style placeholders,
+and uncheck anyone you don't want to contact. Anyone with no email address in the
+CSV, or already emailed, starts unchecked. The preview shows the message as the
+first recipient will see it, and names any placeholder you misspelled before it
+goes out. Templates are saved in D1 and shared between reviewers.
+
+Available placeholders: `{name}` `{first}` `{email}` `{studentId}` `{level}`
+`{status}` `{points}` `{reasons}` `{problems}` `{notes}` `{courses}` `{school}`
+`{term}` `{requiredTerm}`.
+
+`{term}` is the semester read off the card; `{requiredTerm}` is the one Settings
+asks for. Use `{requiredTerm}` when telling someone what to resend — if their
+card couldn't be read, `{term}` is empty by definition.
+
+### Connecting Gmail
+
+`gmail.send` is a Google *restricted* scope, and that shapes the setup:
+
+> **Use a Google Workspace account and set the consent screen to Internal.** An
+> External consent screen left in *Testing* expires its refresh token after 7
+> days, so you would have to reconnect every week. Publishing an External app
+> with a restricted scope requires a Google security assessment.
+
+1. In the [Google Cloud Console](https://console.cloud.google.com), create a
+   project and enable the **Gmail API**.
+2. Configure the OAuth consent screen as **Internal**, and add the scope
+   `https://www.googleapis.com/auth/gmail.send`.
+3. Create an **OAuth client ID** of type *Web application* with these authorized
+   redirect URIs:
+   - `https://<your-pages-domain>/api/gmail/callback`
+   - `http://localhost:8788/api/gmail/callback` (for `npm run dev`)
+4. Store the credentials:
+
+```bash
+npx wrangler pages secret put GOOGLE_CLIENT_ID
+npx wrangler pages secret put GOOGLE_CLIENT_SECRET
+```
+
+5. Open **Settings → Gmail → Connect Gmail** and complete the consent screen.
+
+For local development, add the same two values to `.dev.vars`. Until they are
+set, the Gmail card reads *Not set up* and sending stays disabled — nothing else
+in the portal is affected.
+
+The refresh token is sealed with AES-GCM under a key derived from
+`SESSION_SECRET` before it goes into D1, so rotating `SESSION_SECRET` also
+invalidates it and you reconnect once.
+
+Batches are split into groups of 20 because a Worker request may make only 50
+subrequests on the free plan and each send is one. A send that fails partway
+reports which addresses failed and offers to retry just those; a token that dies
+mid-batch stops the run rather than failing the rest of the list one by one.
+
 ## Privacy
 
 Report cards are streamed through the proxy and parsed in the browser. No PDFs
-are cached and no applicant data is written to the database — only course rules
-persist. Exports save to the reviewer's own machine.
+are cached, and no grades or scores are written to the database — those live in
+the browser until it reloads. Course rules and message templates persist.
+Exports save to the reviewer's own machine.
+
+The one exception is email. Sending records the recipient's name, email address,
+student ID and the subject line in the `email_log` table, so the portal can show
+who has already been contacted across sessions. Grades are never part of that
+record, and clearing the table erases it.
 
 **Application CSVs are never committed.** `.gitignore` excludes `*.csv` and
 `*.pdf`, so the Google Forms export stays on whoever's machine is doing the
@@ -143,7 +214,14 @@ addresses and links to their report cards.
 npm test
 ```
 
-Covers the scoring rules (point values, the D/F rule, the best-5 selection, the
-2-course bonus cap), the school and term checks, and the CSV parser. One test runs against a real application
-export if you have one in the project root, and skips otherwise — the export
-itself isn't committed.
+`scripts/test-scoring.mjs` covers the scoring rules (point values, the D/F rule,
+the best-5 selection, the 2-course bonus cap), the school and term checks, the
+review-reason taxonomy, template placeholder rendering, and the CSV parser. One
+test runs against a real application export if you have one in the project root,
+and skips otherwise — the export itself isn't committed.
+
+`scripts/test-send.mjs` drives the bulk send route with Google and D1 both
+stubbed, so it runs offline. It pins down the things that are expensive to get
+wrong on a live list: one bad address doesn't cost the rest of the batch, a dead
+token stops the run instead of failing fifty times, every attempt is logged, and
+nothing typed into a subject line can forge a mail header.

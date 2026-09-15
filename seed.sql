@@ -106,3 +106,34 @@ INSERT OR IGNORE INTO courses (name, display, value) VALUES
   ('us history', 'US History', 'Regular'),
   ('world history', 'World History', 'Regular'),
   ('yearbook', 'Yearbook', 'Regular');
+
+-- Starter message templates. Edited in the portal; these are only the defaults
+-- so the compose panel is never empty on a fresh database.
+INSERT OR IGNORE INTO email_templates (name, subject, body, updated_at) VALUES
+  ('Missing grade report',
+   'CSF application: we could not read your grade report',
+   'Hi {first},
+
+Thanks for applying to CSF. We were not able to read the report card attached to your application, so we cannot score it yet.
+
+What we saw: {problems}
+
+Please reply to this email with a PDF of your Aeries grade report for {requiredTerm} — the one that lists each course with its teacher, credit, and semester grade. A transcript or a screenshot will not work.
+
+Thanks,
+CSF Adviser',
+   '2026-01-01T00:00:00Z'),
+
+  ('Wrong semester card',
+   'CSF application: we need your {requiredTerm} grade report',
+   'Hi {first},
+
+Thanks for applying to CSF. The grade report attached to your application is not from the semester we need.
+
+What we saw: {notes}
+
+Please reply with your Aeries grade report for {requiredTerm} and we will finish reviewing your application.
+
+Thanks,
+CSF Adviser',
+   '2026-01-01T00:00:00Z');

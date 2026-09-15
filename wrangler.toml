@@ -1,9 +1,8 @@
-name = "anhscsfapplications"
+name = "csfeligibility"
 pages_build_output_dir = "public"
 compatibility_date = "2026-08-24"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "csf"
-# Replace with the id printed by: npx wrangler d1 create csf
-database_id = "cc129375-9f01-4058-81db-41d85762f0f0"
+database_name = "csf-eligibility-settings"
+database_id = "5713f8c0-683f-4a6f-a821-c5e7fd81c0d5"

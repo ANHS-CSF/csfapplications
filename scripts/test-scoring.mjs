@@ -1,4 +1,6 @@
 import { scoreApplicant, normalizeGrade, parseCsv, toCsv, checkSubmission, statusFor, DEFAULT_SETTINGS } from '../public/scoring.js';
+import { reasonsFor, needsReview, notesFor, REASON_LABEL } from '../public/review.js';
+import { renderTemplate, renderMessage, varsFor } from '../public/email.js';
 import { readFileSync, existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
@@ -181,6 +183,120 @@ t('a submission problem is never reported as an academic failure', () => {
   for (const check of [{ termOk: false }, { schoolOk: false }, { termOk: false, schoolOk: false }]) {
     assert.notEqual(statusFor({ result: short, check }), 'NOT QUALIFIED');
   }
+});
+
+console.log('review reasons');
+
+// A whole applicant as rescoreAll leaves it, so the reason helpers are exercised
+// against the real shape rather than a hand-tuned stub.
+const applicant = (over = {}) => ({
+  index: 0, name: 'Ana Ruiz', studentId: '900123', email: 'ana@example.org',
+  level: 'Sophomore', links: ['https://drive.example/card'],
+  courses: [], scored: [], problems: [], unknown: [],
+  schools: ['Aliso Niguel High School'], terms: [spring26],
+  result: { total: 13, base: 13, bonus: 0, chosen: [], qualified: true, flags: [] },
+  check: { schoolOk: true, termOk: true, schoolReason: null, termReason: null },
+  ...over,
+});
+
+const problem = code => ({ code, text: `text for ${code}` });
+
+t('a clean applicant needs no review', () => {
+  assert.equal(needsReview(applicant()), false);
+  assert.deepEqual([...reasonsFor(applicant())], []);
+});
+t('a missing grade table is its own reason, not a generic file problem', () => {
+  const a = applicant({ problems: [problem('no-grade-table')] });
+  assert.deepEqual([...reasonsFor(a)], ['no-grade-table']);
+  assert.equal(needsReview(a), true);
+});
+t('a scanned card is told apart from a wrong document', () => {
+  assert.deepEqual([...reasonsFor(applicant({ problems: [problem('no-text')] }))], ['no-text']);
+  assert.deepEqual([...reasonsFor(applicant({ problems: [problem('download')] }))], ['download']);
+  assert.deepEqual([...reasonsFor(applicant({ problems: [problem('read-error')] }))], ['read-error']);
+});
+t('every problem code has a label to show in the audience list', () => {
+  for (const code of ['no-grade-table', 'no-text', 'download', 'read-error']) {
+    assert.ok(REASON_LABEL.get(code), `no label for ${code}`);
+  }
+});
+t('one applicant can sit in several buckets at once', () => {
+  const a = applicant({
+    problems: [problem('no-grade-table')],
+    unknown: ['Underwater Basketry'],
+    check: { schoolOk: true, termOk: false, termReason: 'Fall 2025, expected Spring 2026' },
+  });
+  assert.deepEqual([...reasonsFor(a)].sort(), ['no-grade-table', 'term', 'unlisted']);
+});
+t('a qualified applicant with an unlisted course still needs a look', () => {
+  const a = applicant({ unknown: ['Some New Elective'] });
+  assert.equal(statusFor(a), 'QUALIFIED');
+  assert.equal(needsReview(a), true);
+});
+t('notes read the text off each problem, not the object', () => {
+  const notes = notesFor(applicant({ problems: [problem('no-grade-table')] }));
+  assert.ok(notes.includes('text for no-grade-table'));
+  assert.ok(!notes.some(n => typeof n !== 'string'));
+});
+
+console.log('email templates');
+t('placeholders are filled per recipient', () => {
+  const out = renderTemplate('Hi {first}, your id is {studentId}.',
+    varsFor(applicant({ name: 'Ana Ruiz' })));
+  assert.equal(out.text, 'Hi Ana, your id is 900123.');
+  assert.deepEqual(out.unknown, []);
+});
+t('a one-word name still yields a first name', () => {
+  assert.equal(varsFor(applicant({ name: 'Prince' })).first, 'Prince');
+});
+t('an unknown placeholder is reported and left alone, never blanked', () => {
+  const out = renderTemplate('Hi {frist}', varsFor(applicant()));
+  assert.equal(out.text, 'Hi {frist}');
+  assert.deepEqual(out.unknown, ['frist']);
+});
+t('an unknown placeholder is only reported once however often it appears', () => {
+  assert.deepEqual(renderTemplate('{x} {x} {x}', varsFor(applicant())).unknown, ['x']);
+});
+t('braces that are not placeholders survive untouched', () => {
+  const out = renderTemplate('use {} or { name } or {9lives}', varsFor(applicant()));
+  assert.equal(out.text, 'use {} or { name } or {9lives}');
+  assert.deepEqual(out.unknown, []);
+});
+t('points are withheld under review, matching the table', () => {
+  const under = applicant({ check: { schoolOk: true, termOk: false } });
+  assert.equal(varsFor(under).points, '');
+  assert.equal(varsFor(applicant()).points, '13');
+});
+t('{requiredTerm} comes from settings, not from the unreadable card', () => {
+  // The case that matters: the card could not be read, so {term} is empty and
+  // the only semester you can name is the one you are asking for.
+  const a = applicant({ terms: [], problems: [problem('no-grade-table')] });
+  const vars = varsFor(a, SETTINGS);
+  assert.equal(vars.term, '');
+  assert.equal(vars.requiredTerm, 'Spring 2026');
+});
+t('{requiredTerm} is blank rather than "undefined" with no settings', () => {
+  assert.equal(varsFor(applicant()).requiredTerm, '');
+});
+t('{reasons} reads as a human list, not internal codes', () => {
+  const a = applicant({ problems: [problem('no-grade-table')] });
+  assert.equal(varsFor(a).reasons, 'No Aeries grade table');
+});
+t('subject and body pool their unknown placeholders', () => {
+  const out = renderMessage({ subject: 'Hi {oops}', body: 'Bye {alsobad} {first}' }, applicant());
+  assert.deepEqual(out.unknown.sort(), ['alsobad', 'oops']);
+  assert.equal(out.body, 'Bye {alsobad} Ana');
+});
+t('a substituted value is never re-scanned for placeholders', () => {
+  // A name of "{first}" must not recurse; replace() semantics guarantee it, and
+  // this pins that guarantee down.
+  const out = renderTemplate('Hi {name}', varsFor(applicant({ name: '{first}' })));
+  assert.equal(out.text, 'Hi {first}');
+  assert.deepEqual(out.unknown, []);
+});
+t('an empty template renders to nothing rather than throwing', () => {
+  assert.equal(renderTemplate('', varsFor(applicant())).text, '');
+  assert.equal(renderTemplate(undefined, varsFor(applicant())).text, '');
 });
 
 console.log('csv');

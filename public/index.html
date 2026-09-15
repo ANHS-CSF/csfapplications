@@ -133,6 +133,54 @@ tbody tr.app-row:hover { background: var(--panel-2); }
        border-radius: 8px; padding: 9px 12px; font-size: 14px; }
 .note { background: var(--warn-bg); color: var(--warn-ink); border: 1px solid var(--warn-line);
         border-radius: 8px; padding: 9px 12px; font-size: 14px; }
+.ok-note { background: var(--ok-bg); color: var(--ok-ink); border: 1px solid var(--ok-line);
+        border-radius: 8px; padding: 9px 12px; font-size: 14px; }
+
+/* ---- compose overlay ---- */
+.modal {
+  position: fixed; inset: 0; z-index: 50; padding: 24px 16px;
+  background: color-mix(in srgb, #000 45%, transparent);
+  display: grid; place-items: start center; overflow-y: auto;
+}
+.modal > .card {
+  width: 100%; max-width: 820px; margin: 0;
+  box-shadow: 0 18px 50px color-mix(in srgb, #000 28%, transparent);
+  /* A grid item defaults to min-width: auto, so one long unbreakable email
+     address would otherwise push the whole panel wider than a phone screen and
+     clip its right edge. */
+  min-width: 0;
+}
+.field { display: block; margin-bottom: 12px; }
+.field > span { display: block; font-weight: 550; font-size: 13px; margin-bottom: 5px; }
+.field > input, .field > textarea, .field > select { width: 100%; }
+.field > textarea { min-height: 190px; resize: vertical; line-height: 1.55; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.chips button {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; padding: 2px 7px; border-radius: 6px; font-weight: 500;
+}
+.preview {
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; font-size: 14px; white-space: pre-wrap; word-break: break-word;
+  max-height: 230px; overflow-y: auto;
+}
+.preview .subj { font-weight: 650; display: block; margin-bottom: 8px; }
+.picks { border: 1px solid var(--line); border-radius: 8px; max-height: 260px; overflow-y: auto; }
+.pick {
+  display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  padding: 7px 11px; border-bottom: 1px solid var(--line);
+}
+.pick:last-child { border-bottom: 0; }
+.pick input { width: 15px; height: 15px; flex: none; margin-top: 3px; }
+.pick.off { color: var(--muted); }
+.pick .who { font-weight: 550; }
+.pick > span { min-width: 0; overflow-wrap: anywhere; }
+.pick .why { font-size: 12.5px; color: var(--muted); margin-left: auto; text-align: right; }
+@media (max-width: 560px) {
+  /* Stack the reason under the address rather than squeezing both into a
+     column an inch wide. */
+  .pick .why { margin-left: 25px; text-align: left; flex-basis: 100%; }
+}
 </style>
 </head>
 <body>
@@ -207,6 +255,7 @@ tbody tr.app-row:hover { background: var(--panel-2); }
             <select id="reason" class="sm hidden" style="padding:7px 9px; font-size:15px">
               <option value="any">Any reason</option>
             </select>
+            <button id="compose">Email&hellip;</button>
             <button id="export">Export CSV</button>
           </div>
         </header>
@@ -220,6 +269,73 @@ tbody tr.app-row:hover { background: var(--panel-2); }
             </tr></thead>
             <tbody id="rows"></tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- ---------------- compose ---------------- -->
+      <div class="modal hidden" id="email-panel">
+        <div class="card">
+          <header>
+            <h2>Email applicants</h2>
+            <button class="sm spacer" id="email-close">Close</button>
+          </header>
+
+          <p class="note hidden" id="email-gmail-warn" style="margin-bottom:14px"></p>
+          <p class="muted" id="email-sender" style="margin-bottom:14px"></p>
+
+          <label class="field">
+            <span>Who gets this</span>
+            <select id="email-audience"></select>
+          </label>
+
+          <label class="field">
+            <span>Template</span>
+            <select id="email-template"></select>
+          </label>
+
+          <label class="field">
+            <span>Subject</span>
+            <input id="email-subject" type="text" placeholder="CSF application: we need another look at your grades">
+          </label>
+
+          <label class="field">
+            <span>Message</span>
+            <textarea id="email-body" placeholder="Hi {first},&#10;&#10;&hellip;"></textarea>
+          </label>
+          <div class="chips" id="email-vars"></div>
+          <p class="muted" style="margin:7px 0 14px; font-size:13px">
+            Click a variable to insert it. Each recipient gets their own values.
+          </p>
+
+          <div class="row" style="margin-bottom:14px">
+            <button class="sm" id="email-save">Save template</button>
+            <button class="sm" id="email-save-as">Save as new&hellip;</button>
+            <button class="sm" id="email-delete">Delete template</button>
+          </div>
+
+          <p class="note hidden" id="email-unknown" style="margin-bottom:14px"></p>
+
+          <header style="margin:18px 0 8px"><h2>Preview</h2>
+            <span class="muted spacer" id="email-preview-who"></span>
+          </header>
+          <div class="preview" id="email-preview"></div>
+
+          <header style="margin:20px 0 8px"><h2>Recipients</h2>
+            <span class="muted spacer" id="email-count"></span>
+            <button class="sm" id="email-all">Select all</button>
+            <button class="sm" id="email-none">Select none</button>
+          </header>
+          <div class="picks" id="email-picks"></div>
+
+          <div class="bar hidden" id="email-bar-wrap" style="margin-top:16px">
+            <i id="email-bar" style="width:0%"></i>
+          </div>
+          <p class="hidden" id="email-result" style="margin-top:14px"></p>
+
+          <div class="row" style="margin-top:18px">
+            <button class="primary" id="email-send">Send</button>
+            <button class="sm hidden" id="email-retry">Retry the failures</button>
+          </div>
         </div>
       </div>
     </section>
@@ -312,11 +428,47 @@ AP Chem, AP"></textarea>
         </p>
       </div>
       <div class="card">
+        <header>
+          <h2>Gmail</h2>
+          <span class="muted spacer" id="gmail-status">Checking&hellip;</span>
+        </header>
+        <p class="muted" style="margin-bottom:12px">
+          Connect a Gmail account to send messages to applicants from the Applicants tab.
+          Mail is sent as that account and copies land in its Sent folder.
+        </p>
+        <div class="row">
+          <button id="gmail-connect">Connect Gmail</button>
+          <button class="sm hidden" id="gmail-disconnect">Disconnect</button>
+        </div>
+        <p class="note hidden" id="gmail-note" style="margin-top:12px"></p>
+      </div>
+
+      <div class="card">
+        <header>
+          <h2>Recent emails</h2>
+          <button class="sm spacer" id="log-refresh">Refresh</button>
+        </header>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Sent</th><th>Applicant</th><th>Email</th><th>Subject</th><th>Result</th></tr></thead>
+            <tbody id="log-rows"></tbody>
+          </table>
+        </div>
+        <p class="muted" id="log-empty" style="margin-top:10px">Nothing sent yet.</p>
+      </div>
+
+      <div class="card">
         <header><h2>Privacy</h2></header>
         <p class="muted">
-          Report cards are streamed through this server and read in your browser. Nothing is stored:
-          no PDFs are cached, and no applicant data is written to the database — only the course rules persist.
-          Exports are saved to your own computer.
+          Report cards are streamed through this server and read in your browser. No PDFs are cached,
+          and no grades or scores are ever written to the database — those live only in your browser
+          until you reload, and in the CSV exports you save to your own computer.
+        </p>
+        <p class="muted" style="margin-top:10px">
+          The one exception is email. When you send a message, the recipient's name, email address,
+          student ID, and the subject line are recorded in the database so you can see who has
+          already been contacted. Course grades are never part of that record. Clearing the
+          <span class="mono">email_log</span> table erases it.
         </p>
       </div>
     </section>
