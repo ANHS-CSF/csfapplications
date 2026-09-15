@@ -55,3 +55,39 @@ export function notesFor(a) {
   if (a.result?.flags?.length) notes.push(...a.result.flags.filter(f => f !== 'D/F' && f !== 'no-courses'));
   return notes;
 }
+
+/* ------------------------------------------------- prior CSF membership --- */
+
+// The application asks whether they were in CSF last year with four answers,
+// two of which are sentences about transferring in. Collapsing them to a code
+// keeps the long prose out of the audience list and out of email bodies.
+export const RETURNING = {
+  'yes': 'Returning member',
+  'no': 'New applicant',
+  'transfer-member': 'Transfer, was a member',
+  'transfer-new': 'Transfer, new applicant',
+  'other': 'Unrecognized answer',
+};
+
+export function classifyReturning(raw) {
+  const t = String(raw ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+
+  // The transfer answers are checked first because they contain neither a bare
+  // yes nor a bare no, and "WAS NOT a member" has to be tested before "WAS a
+  // member" or every transfer would read as a returning member.
+  if (t.includes('did not attend')) {
+    return /was not a member/.test(t) ? 'transfer-new' : 'transfer-member';
+  }
+  // Anchored, not a prefix test: the form's options are exact strings, and a
+  // loose /^n/ would quietly file a reworded "Not sure" under No. Anything
+  // unrecognized becomes 'other', which shows up in the UI instead of hiding.
+  if (/^y(es)?[.!]?$/.test(t)) return 'yes';
+  if (/^no?[.!]?$/.test(t)) return 'no';
+  return 'other';
+}
+
+// Membership carries across schools for semester counts, so a transfer who was
+// a member somewhere else is a returning member for this purpose.
+export const wasMember = code => code === 'yes' || code === 'transfer-member';
+export const isTransfer = code => code === 'transfer-new' || code === 'transfer-member';

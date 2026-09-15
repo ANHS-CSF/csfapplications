@@ -1,5 +1,5 @@
 import { scoreApplicant, normalizeGrade, parseCsv, toCsv, checkSubmission, statusFor, DEFAULT_SETTINGS } from '../public/scoring.js';
-import { reasonsFor, needsReview, notesFor, REASON_LABEL } from '../public/review.js';
+import { reasonsFor, needsReview, notesFor, REASON_LABEL, RETURNING, classifyReturning, wasMember, isTransfer } from '../public/review.js';
 import { renderTemplate, renderMessage, varsFor, splitName } from '../public/email.js';
 import { readFileSync, existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
@@ -237,6 +237,84 @@ t('notes read the text off each problem, not the object', () => {
   const notes = notesFor(applicant({ problems: [problem('no-grade-table')] }));
   assert.ok(notes.includes('text for no-grade-table'));
   assert.ok(!notes.some(n => typeof n !== 'string'));
+});
+
+console.log('prior CSF membership');
+
+// The four answers the application actually offers, verbatim.
+const ANSWERS = {
+  yes: 'Yes',
+  no: 'No',
+  transferNew: 'I did not attend ANHS last year, and WAS NOT a member at a different school',
+  transferMember: 'I did not attend ANHS last year, and WAS a member at a different school',
+};
+
+t('each of the four answers classifies distinctly', () => {
+  assert.equal(classifyReturning(ANSWERS.yes), 'yes');
+  assert.equal(classifyReturning(ANSWERS.no), 'no');
+  assert.equal(classifyReturning(ANSWERS.transferNew), 'transfer-new');
+  assert.equal(classifyReturning(ANSWERS.transferMember), 'transfer-member');
+});
+t('"WAS NOT a member" is not read as "WAS a member"', () => {
+  // Both transfer answers contain "was a member" as a substring, so checking
+  // the negative first is the whole trick. Getting this backwards would tell a
+  // brand-new applicant we had them on last year's roster.
+  assert.notEqual(classifyReturning(ANSWERS.transferNew), 'transfer-member');
+  assert.equal(wasMember(classifyReturning(ANSWERS.transferNew)), false);
+  assert.equal(wasMember(classifyReturning(ANSWERS.transferMember)), true);
+});
+t('membership carries across schools but transfer status does not', () => {
+  assert.deepEqual(
+    ['yes', 'no', 'transfer-new', 'transfer-member'].map(c => [wasMember(c), isTransfer(c)]),
+    [[true, false], [false, false], [false, true], [true, true]]
+  );
+});
+t('an unmapped or blank column is undecided, not a "no"', () => {
+  for (const v of ['', '   ', null, undefined]) {
+    assert.equal(classifyReturning(v), null);
+    assert.equal(wasMember(classifyReturning(v)), false);
+  }
+});
+t('a reworded answer is flagged rather than silently bucketed', () => {
+  assert.equal(classifyReturning('Not sure'), 'other');
+  assert.ok(RETURNING.other);
+});
+t('classification tolerates case and spacing', () => {
+  assert.equal(classifyReturning('  YES  '), 'yes');
+  assert.equal(classifyReturning(ANSWERS.transferMember.toUpperCase()), 'transfer-member');
+  assert.equal(classifyReturning(ANSWERS.transferNew.replace(/ /g, '   ')), 'transfer-new');
+});
+t('every code has a label for the audience list', () => {
+  for (const code of ['yes', 'no', 'transfer-new', 'transfer-member', 'other']) {
+    assert.ok(RETURNING[code], `no label for ${code}`);
+  }
+});
+
+console.log('email addresses and membership as variables');
+t('{email} is the personal address, never the school one', () => {
+  const v = varsFor(applicant({
+    email: 'me@gmail.com', personalEmail: 'me@gmail.com', schoolEmail: 'me@student.anhs.us',
+  }));
+  assert.equal(v.email, 'me@gmail.com');
+  assert.equal(v.personalEmail, 'me@gmail.com');
+  assert.equal(v.schoolEmail, 'me@student.anhs.us');
+});
+t('a missing school email renders blank, not "undefined"', () => {
+  const v = varsFor(applicant({ schoolEmail: undefined }));
+  assert.equal(v.schoolEmail, '');
+});
+t('{returning} is the short label and {returningRaw} the exact answer', () => {
+  const v = varsFor(applicant({
+    returningRaw: ANSWERS.transferMember,
+    returning: classifyReturning(ANSWERS.transferMember),
+  }));
+  assert.equal(v.returning, 'Transfer, was a member');
+  assert.equal(v.returningRaw, ANSWERS.transferMember);
+});
+t('an unanswered membership question renders blank', () => {
+  const v = varsFor(applicant({ returningRaw: '', returning: null }));
+  assert.equal(v.returning, '');
+  assert.equal(v.returningRaw, '');
 });
 
 console.log('email templates');

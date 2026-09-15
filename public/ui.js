@@ -1,7 +1,10 @@
 // Wiring for the eligibility portal: auth, CSV intake, batch extraction, review.
 import { parseCsv, toCsv, scoreApplicant, normalizeGrade, checkSubmission, statusFor, DEFAULT_SETTINGS } from './scoring.js';
 import { extractCourses } from './extract.js';
-import { REVIEW_REASONS, REASON_LABEL, reasonsFor, needsReview, notesFor } from './review.js';
+import {
+  REVIEW_REASONS, REASON_LABEL, reasonsFor, needsReview, notesFor,
+  RETURNING, classifyReturning, wasMember, isTransfer,
+} from './review.js';
 import { TEMPLATE_VARS, renderMessage } from './email.js';
 
 const $ = sel => document.querySelector(sel);
@@ -280,10 +283,24 @@ function guessMapping() {
   const linkCols = state.headers.map((_, i) => i).filter(i =>
     state.rows.filter(r => /drive\.google\.com|docs\.google\.com/.test(r[i] || '')).length >= 2);
 
+  // Two email columns, and they are not interchangeable: the district school
+  // accounts have no inbox, so the personal address is the one mail goes to.
+  const emailCols = H.map((h, i) => [h, i]).filter(([h]) => /e-?mail/.test(h)).map(([, i]) => i);
+  const schoolEmail = findHeader(/school e-?mail/, /district e-?mail/);
+  const personalEmail = (() => {
+    const named = findHeader(/personal e-?mail/, /private e-?mail/, /non-?school e-?mail/);
+    if (named > -1) return named;
+    // A form with only one email column means that column is the usable one,
+    // whatever it is called.
+    return emailCols.find(i => i !== schoolEmail) ?? -1;
+  })();
+
   return {
     name: findHeader(/enter your name/, /full name/, /^name/),
     id: findHeader(/id number/, /student id/),
-    email: findHeader(/school email/, /email/),
+    emailPersonal: personalEmail,
+    emailSchool: schoolEmail,
+    csf: findHeader(/csf last year/, /in csf/, /member last year/, /last year/),
     level: findHeader(/what grade are you in/, /grade level/),
     card: linkCols[0] ?? -1,
     card2: linkCols[1] ?? -1,
@@ -295,8 +312,10 @@ function buildMapper() {
   const fields = [
     ['name', 'Applicant name'],
     ['id', 'Student ID'],
-    ['email', 'Email'],
+    ['emailPersonal', 'Personal email (mail goes here)'],
+    ['emailSchool', 'School email (optional)'],
     ['level', 'Grade level'],
+    ['csf', 'In CSF last year (optional)'],
     ['card', 'Report card link'],
     ['card2', 'Second report card (optional)'],
   ];
@@ -328,8 +347,12 @@ function buildMapper() {
 
   $('#map-summary').textContent = `${state.rows.length} applicants loaded`;
   $('#mapping').classList.remove('hidden');
-  $('#run-hint').textContent = state.mapping.card < 0
-    ? 'No report card column detected — pick one above.' : '';
+  // Both are warnings, not blockers: scoring works without an email column, it
+  // just means nobody can be emailed afterwards.
+  const hints = [];
+  if (state.mapping.card < 0) hints.push('No report card column detected — pick one above.');
+  if (state.mapping.emailPersonal < 0) hints.push('No personal email column detected — you can score, but not email.');
+  $('#run-hint').textContent = hints.join(' ');
 }
 
 /* ------------------------------------------------------- batch process --- */
@@ -349,7 +372,12 @@ async function run() {
     index: i,
     name: cell(row, m.name) || `Row ${i + 2}`,
     studentId: cell(row, m.id),
-    email: cell(row, m.email),
+    personalEmail: cell(row, m.emailPersonal),
+    schoolEmail: cell(row, m.emailSchool),
+    // The address mail is actually sent to. Kept as its own field so the send
+    // path, the log and the contacted set all read one place.
+    email: cell(row, m.emailPersonal),
+    returningRaw: cell(row, m.csf),
     level: cell(row, m.level),
     links: [cell(row, m.card), cell(row, m.card2)].filter(Boolean),
   }));
@@ -423,6 +451,7 @@ function rescoreAll() {
     });
     a.unknown = a.courses.filter(c => !isKnown(c.name)).map(c => c.name);
     a.check = checkSubmission({ schools: a.schools, terms: a.terms }, state.settings);
+    a.returning = classifyReturning(a.returningRaw);
   }
   renderResults();
 }
@@ -817,6 +846,12 @@ function audiences() {
       [`reason:${key}`, `Needs review · ${label}`, a => needsReview(a) && reasonsFor(a).has(key)]),
     ['qualified', 'Qualified applicants', a => statusOf(a) === 'QUALIFIED'],
     ['not', 'Not qualified applicants', a => statusOf(a) === 'NOT QUALIFIED'],
+    // Only ever non-empty once the "in CSF last year" column is mapped, and
+    // renderAudiences drops empty buckets, so these disappear on a form that
+    // never asked.
+    ['returning', 'Returning members (any school)', a => wasMember(a.returning)],
+    ['new-member', 'New applicants', a => a.returning === 'no' || a.returning === 'transfer-new'],
+    ['transfer', 'Transfers from another school', a => isTransfer(a.returning)],
     ['shown', "Whatever the table is showing right now", a => inShown.has(a)],
     ['all', 'Everyone in the CSV', () => true],
   ];
@@ -1030,7 +1065,12 @@ function renderPicks() {
 
     const addr = document.createElement('span');
     addr.className = 'mono muted';
-    addr.textContent = usable ? a.email : (a.email ? `${a.email} — not an address` : 'no email in the CSV');
+    // Says "personal" explicitly: the school address is no help here, so an
+    // applicant with one and no personal address still needs chasing.
+    addr.textContent = usable ? a.email
+      : a.email ? `${a.email} — not an address`
+      : a.schoolEmail ? 'no personal email — only a school address'
+      : 'no email in the CSV';
 
     const why = document.createElement('span');
     why.className = 'why';
@@ -1207,12 +1247,14 @@ async function sendBatch(list) {
 
 $('#export').addEventListener('click', () => {
   const rows = [[
-    'Name', 'Student ID', 'Email', 'Grade level', 'Points', 'Status',
+    'Name', 'Student ID', 'Personal email', 'School email', 'Grade level',
+    'In CSF last year', 'Points', 'Status',
     'School', 'Term', 'Courses counted', 'All courses', 'Notes', 'Report card',
   ]];
   for (const a of state.applicants.filter(Boolean)) {
     rows.push([
-      a.name, a.studentId, a.email, a.level,
+      a.name, a.studentId, a.personalEmail ?? '', a.schoolEmail ?? '', a.level,
+      a.returningRaw ?? '',
       statusOf(a) === 'NEEDS REVIEW' ? '' : (a.result?.total ?? ''),
       statusOf(a),
       (a.schools ?? []).join(' + '),

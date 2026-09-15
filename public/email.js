@@ -3,14 +3,16 @@
 // kind of mistake worth a test.
 
 import { statusFor } from './scoring.js';
-import { reasonsFor, notesFor, REASON_LABEL } from './review.js';
+import { reasonsFor, notesFor, REASON_LABEL, RETURNING } from './review.js';
 
 // Shown as clickable chips in the compose panel, so this list is the
 // documentation as well as the implementation.
 export const TEMPLATE_VARS = [
   ['name', 'Full name, in reading order'],
   ['first', 'First name only'],
-  ['email', 'Their email address'],
+  ['email', 'Address this message is going to'],
+  ['personalEmail', 'Personal email'],
+  ['schoolEmail', 'School email'],
   ['studentId', 'Student ID'],
   ['level', 'Grade level'],
   ['status', 'QUALIFIED / NOT QUALIFIED / NEEDS REVIEW'],
@@ -22,6 +24,8 @@ export const TEMPLATE_VARS = [
   ['school', 'School name read from the card'],
   ['term', 'Semester read from the card'],
   ['requiredTerm', 'Semester you are asking them for'],
+  ['returning', 'Whether they were in CSF last year'],
+  ['returningRaw', 'Their exact answer about last year'],
 ];
 
 export const VAR_NAMES = new Set(TEMPLATE_VARS.map(([k]) => k));
@@ -62,7 +66,12 @@ export function varsFor(a, settings = {}) {
     // a reviewer can match it against the CSV.
     name: natural,
     first,
+    // {email} is the address the message is actually going to, which is the
+    // personal one — the school accounts have no inbox. The other two are here
+    // for when the text needs to name a specific address.
     email: a.email ?? '',
+    personalEmail: a.personalEmail ?? '',
+    schoolEmail: a.schoolEmail ?? '',
     studentId: a.studentId ?? '',
     level: a.level ?? '',
     status,
@@ -76,6 +85,10 @@ export function varsFor(a, settings = {}) {
     school: (a.schools ?? []).join(' + '),
     term: (a.terms ?? []).map(t => t.label).join(' + '),
     requiredTerm: required ? `${required.term} ${required.year}` : '',
+    // The short label, not the four-line questionnaire answer. {returningRaw}
+    // is there for anyone who does want to quote it back.
+    returning: RETURNING[a.returning] ?? '',
+    returningRaw: a.returningRaw ?? '',
   };
 }
 

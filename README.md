@@ -137,16 +137,19 @@ so the next batch picks it up. Any course not in the table is treated as
 through the Gmail API, as the connected account, with copies landing in its Sent
 folder.
 
-Pick an audience — everyone needing review, or one specific reason such as *No
-Aeries grade table* — write the message once with `{name}`-style placeholders,
+Pick an audience — everyone needing review, one specific reason such as *No
+Aeries grade table*, or one membership group (*Returning members*, *New
+applicants*, *Transfers from another school*) — write the message once with
+`{name}`-style placeholders,
 and uncheck anyone you don't want to contact. Anyone with no email address in the
 CSV, or already emailed, starts unchecked. The preview shows the message as the
 first recipient will see it, and names any placeholder you misspelled before it
 goes out. Templates are saved in D1 and shared between reviewers.
 
-Available placeholders: `{name}` `{first}` `{email}` `{studentId}` `{level}`
-`{status}` `{points}` `{reasons}` `{problems}` `{notes}` `{courses}` `{school}`
-`{term}` `{requiredTerm}`.
+Available placeholders: `{name}` `{first}` `{email}` `{personalEmail}`
+`{schoolEmail}` `{studentId}` `{level}` `{status}` `{points}` `{reasons}`
+`{problems}` `{notes}` `{courses}` `{school}` `{term}` `{requiredTerm}`
+`{returning}` `{returningRaw}`.
 
 `{term}` is the semester read off the card; `{requiredTerm}` is the one Settings
 asks for. Use `{requiredTerm}` when telling someone what to resend — if their
@@ -156,6 +159,33 @@ card couldn't be read, `{term}` is empty by definition.
 `Bacellar Ahmadi, Lucas` greets as *Lucas*, not *Bacellar*, and `{name}` renders
 in reading order. The Results table still shows the name exactly as the CSV has
 it, so it stays easy to match against the export.
+
+### The two email columns
+
+The application collects a school address and a personal one, and they are not
+interchangeable: **the district school accounts have no real inbox, so mail is
+only ever sent to the personal address.** `{email}` is therefore always the
+personal one; `{schoolEmail}` and `{personalEmail}` are there for when the text
+needs to name a specific address.
+
+An applicant who gave a school address but no personal one cannot be reached.
+They appear in the recipient list, unchecked, labelled *no personal email — only
+a school address*, so it is obvious who needs chasing by hand. Both columns are
+in the CSV export.
+
+### Prior membership
+
+The application asks whether they were in CSF last year, with four answers: yes,
+no, and two sentences covering transfers who either were or were not members at
+their previous school. `{returning}` renders a short label (*Returning member*,
+*New applicant*, *Transfer, was a member*, *Transfer, new applicant*) and
+`{returningRaw}` gives the answer verbatim.
+
+Membership carries across schools for semester counts, so *Returning members
+(any school)* includes a transfer who was a member elsewhere. An answer the app
+doesn't recognize — a reworded form option — becomes *Unrecognized answer*
+rather than being quietly filed under *No*, so a form edit shows up instead of
+silently mis-addressing people.
 
 ### Connecting Gmail
 
