@@ -142,9 +142,9 @@ await t('no connected account is a 409 and writes nothing', async () => {
   assert.equal(db.inserted.length, 0);
 });
 
-await t('the From header is the connected account', async () => {
+await t('the From header names the chapter and uses the connected account', async () => {
   const { sent } = await run({ messages: msgs(1), behavior: okSend });
-  assert.match(sent[0].mime, /^From: adviser@school\.org$/m);
+  assert.match(sent[0].mime, /^From: "ANHS CSF" <adviser@school\.org>$/m);
 });
 
 await t('an accented body survives the round trip to Gmail', async () => {

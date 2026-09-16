@@ -7,6 +7,9 @@ import { accessToken, buildMime, sendMessage, loadAccount, NeedsReconnect } from
 const MAX_PER_CALL = 25;
 const GAP_MS = 150;
 
+// Display name on the From line. SENDER_NAME overrides it per deployment.
+const DEFAULT_SENDER_NAME = 'ANHS CSF';
+
 // Deliberately permissive: the point is to catch a mangled CSV cell, not to
 // adjudicate what Gmail will accept.
 const looksLikeEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v ?? '').trim());
@@ -54,6 +57,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   const from = account?.email || undefined;
+  const fromName = env.SENDER_NAME ?? DEFAULT_SENDER_NAME;
   const logRows = [];
   const results = [];
   let reconnect = false;
@@ -70,7 +74,7 @@ export async function onRequestPost({ request, env }) {
 
     let ok = false, error = null;
     try {
-      await sendMessage(token, buildMime({ from, to: m.email, subject: m.subject, body: m.body }));
+      await sendMessage(token, buildMime({ from, fromName, to: m.email, subject: m.subject, body: m.body }));
       ok = true;
     } catch (e) {
       error = e.message;
