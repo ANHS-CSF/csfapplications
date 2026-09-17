@@ -1,4 +1,6 @@
 import { requireAuth, json } from '../../lib/auth.js';
+import { loadAccount, NeedsReconnect } from '../../lib/gmail.js';
+import { fileIdFrom, downloadFile } from '../../lib/drive.js';
 
 const ALLOWED_HOSTS = new Set([
   'drive.google.com',
@@ -39,10 +41,18 @@ export async function onRequestGet({ request, env }) {
     return json({ error: 'Link is not a recognized Google Drive file URL.' }, { status: 400 });
   }
 
+  // With a Google account connected, read the file as that account so report
+  // cards can stay private to whoever owns the form's upload folder. Without
+  // one, fall back to the anonymous download, which needs public sharing.
+  const connected = env.GOOGLE_CLIENT_ID && await loadAccount(env);
   let upstream;
   try {
-    upstream = await fetch(direct, { redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0' } });
-  } catch {
+    upstream = connected
+      ? await downloadFile(env, fileIdFrom(target))
+      : await fetch(direct, { redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0' } });
+  } catch (e) {
+    if (e instanceof NeedsReconnect) return json({ error: e.message, reconnect: true }, { status: 401 });
+    if (e.status) return json({ error: `Drive: ${e.message}` }, { status: 502 });
     return json({ error: 'Could not reach Google Drive.' }, { status: 502 });
   }
   if (!upstream.ok) {

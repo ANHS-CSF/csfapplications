@@ -4,6 +4,7 @@ const DEFAULTS = {
   allowedSchools: ['Aliso Niguel High School', 'California Preparatory Academy'],
   requiredTerm: { term: 'Spring', year: 2026 },
   dfAnywhereDisqualifies: false,
+  sheetUrl: '',
 };
 
 export async function onRequestGet({ request, env }) {
@@ -61,5 +62,6 @@ function validate(s) {
   if ('dfAnywhereDisqualifies' in s && typeof s.dfAnywhereDisqualifies !== 'boolean') {
     return 'dfAnywhereDisqualifies must be true or false.';
   }
+  if ('sheetUrl' in s && typeof s.sheetUrl !== 'string') return 'sheetUrl must be a string.';
   return null;
 }

@@ -222,6 +222,17 @@ tbody tr.app-row:hover { background: var(--panel-2); }
           <input type="file" id="file" accept=".csv,text/csv" hidden>
           <button onclick="document.getElementById('file').click()">Choose CSV file</button>
         </div>
+        <div id="sheet-intake" style="margin-top:16px">
+          <label for="sheet-url" style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">
+            Or load the responses sheet straight from Google
+          </label>
+          <div class="row" style="gap:8px; flex-wrap:wrap">
+            <input id="sheet-url" type="url" placeholder="https://docs.google.com/spreadsheets/d/&hellip;" style="flex:1; min-width:220px">
+            <select id="sheet-tab" class="hidden"></select>
+            <button id="sheet-load">Load sheet</button>
+          </div>
+          <p class="muted" id="sheet-msg" style="margin-top:6px"></p>
+        </div>
       </div>
 
       <div class="card hidden" id="mapping">
@@ -433,8 +444,10 @@ AP Chem, AP"></textarea>
           <span class="muted spacer" id="gmail-status">Checking&hellip;</span>
         </header>
         <p class="muted" style="margin-bottom:12px">
-          Connect a Gmail account to send messages to applicants from the Applicants tab.
+          Connect a Google account to send messages to applicants from the Applicants tab,
+          and to read the responses sheet and report cards without sharing them publicly.
           Mail is sent as that account and copies land in its Sent folder.
+          Connected before Drive access was added? Disconnect and connect again to grant it.
         </p>
         <div class="row">
           <button id="gmail-connect">Connect Gmail</button>

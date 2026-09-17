@@ -116,6 +116,7 @@ async function saveSettings(patch) {
 function renderSettings() {
   const { allowedSchools, requiredTerm, dfAnywhereDisqualifies } = state.settings;
   $('#strict-df').checked = !!dfAnywhereDisqualifies;
+  if (!$('#sheet-url').value) $('#sheet-url').value = state.settings.sheetUrl || '';
   $('#schools').value = (allowedSchools || []).join('\n');
   $('#term-season').value = requiredTerm?.term ?? 'Spring';
   $('#term-year').value = requiredTerm?.year ?? new Date().getFullYear();
@@ -267,12 +268,51 @@ $('#file').addEventListener('change', e => {
 });
 
 async function readCsvFile(file) {
-  const rows = parseCsv(await file.text());
-  if (rows.length < 2) { alert('That CSV has no data rows.'); return; }
+  loadRows(parseCsv(await file.text()), 'That CSV');
+}
+
+function loadRows(rows, what) {
+  if (rows.length < 2) { alert(`${what} has no data rows.`); return; }
   state.headers = rows[0];
   state.rows = rows.slice(1);
   buildMapper();
 }
+
+// Reading the sheet goes through the connected Google account, so it needs no
+// public sharing. The URL is remembered in shared settings, because every
+// reviewer works from the same form.
+async function loadSheet(tab) {
+  const url = $('#sheet-url').value.trim();
+  const msg = $('#sheet-msg');
+  if (!url) { msg.textContent = 'Paste the link to the form\'s responses sheet.'; return; }
+  const btn = $('#sheet-load');
+  btn.disabled = true;
+  msg.textContent = 'Loading…';
+  try {
+    const q = new URLSearchParams({ url });
+    if (tab) q.set('tab', tab);
+    const sheet = await api(`/api/sheet?${q}`);
+
+    const sel = $('#sheet-tab');
+    sel.textContent = '';
+    for (const t of sheet.tabs) sel.append(new Option(t, t, false, t === sheet.tab));
+    sel.classList.toggle('hidden', sheet.tabs.length < 2);
+
+    msg.textContent = `${sheet.title} · ${sheet.tab} · ${Math.max(0, sheet.rows.length - 1)} response(s)`;
+    if (url !== state.settings.sheetUrl) {
+      saveSettings({ sheetUrl: url }).catch(() => {});
+    }
+    loadRows(sheet.rows, 'That sheet');
+  } catch (e) {
+    msg.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('#sheet-load').addEventListener('click', () => loadSheet($('#sheet-tab').value || null));
+$('#sheet-url').addEventListener('keydown', e => { if (e.key === 'Enter') loadSheet(); });
+$('#sheet-tab').addEventListener('change', e => loadSheet(e.target.value));
 
 // Guess which columns hold what. Link columns are found by looking at the data
 // rather than the header text, which is what makes this survive a reworded form.

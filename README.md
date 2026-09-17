@@ -99,7 +99,8 @@ and not just a static page:
   `/api/login` verifies it and issues an HMAC-signed, HttpOnly session cookie.
 * **Google Drive sends no CORS headers**, so page JavaScript can't fetch a report
   card directly. `/api/pdf` proxies it — authenticated, and restricted to Google
-  hosts so it can't be used as an open proxy.
+  hosts so it can't be used as an open proxy. With a Google account connected it
+  reads through the Drive API, so the files needn't be public.
 
 Everything else runs client-side. `public/extract.js` reads the PDF with pdf.js
 (vendored in `public/vendor/`, no CDN) and `public/scoring.js` holds the rules.
@@ -193,11 +194,13 @@ silently mis-addressing people.
 non-obvious — do not skip step 4.
 
 1. In the [Google Cloud Console](https://console.cloud.google.com), create a
-   project and enable the **Gmail API**.
+   project and enable the **Gmail API**, **Google Drive API** and
+   **Google Sheets API**.
 2. Under **APIs & Services → OAuth consent screen**, set the audience to
    **External** (the only option for an `@gmail.com` account; a Workspace
-   account may use **Internal** instead and can skip step 4). Add the scope
-   `https://www.googleapis.com/auth/gmail.send`.
+   account may use **Internal** instead and can skip step 4). Add the scopes
+   `https://www.googleapis.com/auth/gmail.send` and
+   `https://www.googleapis.com/auth/drive.readonly`.
 3. Create an **OAuth client ID** of type *Web application* with these authorized
    redirect URIs — add all three, since the callback has to match whichever
    host the reviewer is actually on:
@@ -207,7 +210,7 @@ non-obvious — do not skip step 4.
 4. **Click "Publish app" so the status reads *In production*.** An External app
    left in *Testing* expires its refresh token after **7 days**, so sending
    would break every week. Publishing does not require verification: because
-   `gmail.send` is restricted, Google shows an *unverified app* warning on the
+   both scopes are restricted, Google shows an *unverified app* warning on the
    consent screen — click **Advanced → Go to (unsafe)** to proceed. Verification
    only matters for distributing the app to strangers, and the 100-user cap on
    unverified apps is irrelevant for one adviser's mailbox.
@@ -223,6 +226,24 @@ npx wrangler pages secret put GOOGLE_CLIENT_SECRET
 For local development, add the same two values to `.dev.vars`. Until they are
 set, the Gmail card reads *Not set up* and sending stays disabled — nothing else
 in the portal is affected.
+
+### Reading from Google instead of public links
+
+The same connection reads Google Drive. Once an account is connected:
+
+* **The responses sheet** — paste its link under *Load the application CSV* and
+  click **Load sheet**. The link is remembered in Settings for every reviewer. A
+  sheet with several tabs gets a picker; a link carrying `#gid=` opens that tab.
+* **Report cards** — `/api/pdf` downloads them through the Drive API as the
+  connected account, so the upload folder can be restricted to that account.
+  With no account connected it falls back to the anonymous download, which
+  still needs the files shared publicly.
+
+The connected account must be able to open the files — the form owner's
+account is the simplest choice, since Forms uploads land in its Drive.
+`drive.readonly` can read but never modify or delete anything. An account
+connected before this was added holds a send-only token: disconnect and connect
+again to grant Drive access, and the portal says so if you forget.
 
 A published app's refresh token persists, but it is not immortal. It dies if the
 account's Google password is changed, if access is revoked at
