@@ -1,5 +1,5 @@
 // Wiring for the eligibility portal: auth, CSV intake, batch extraction, review.
-import { parseCsv, toCsv, scoreApplicant, normalizeGrade, checkSubmission, statusFor, DEFAULT_SETTINGS } from './scoring.js';
+import { parseCsv, toCsv, scoreApplicant, checkSubmission, statusFor, DEFAULT_SETTINGS } from './scoring.js';
 import { extractCourses } from './extract.js';
 import {
   REVIEW_REASONS, REASON_LABEL, reasonsFor, needsReview, notesFor,
@@ -11,6 +11,7 @@ const $ = sel => document.querySelector(sel);
 const CATEGORIES = ['AP', 'Honors', 'Regular', 'Inapplicable'];
 const CONCURRENCY = 4;
 const normalize = s => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
+let adderSeq = 0;   // unique <datalist> ids for the by-hand course pickers
 
 const state = {
   rows: [],          // raw CSV rows (no header)
@@ -693,17 +694,7 @@ function detailRow(a) {
     summary.textContent = 'No courses were read from this report card. Add them by hand below.';
   }
 
-  const add = document.createElement('button');
-  add.className = 'sm';
-  add.textContent = 'Add a course';
-  add.onclick = () => {
-    const name = prompt('Course name (as printed on the report card):');
-    if (!name?.trim()) return;
-    const grade = normalizeGrade(prompt('Letter grade (A, B, C, D or F):') || '');
-    if (!grade) { alert('That is not a letter grade.'); return; }
-    a.courses.push({ name: name.trim(), grade, raw: grade });
-    rescoreAll();
-  };
+  const add = buildCourseAdder(course => { a.courses.push(course); rescoreAll(); });
 
   if (a.problems.length) {
     const warn = document.createElement('p');
@@ -715,6 +706,58 @@ function detailRow(a) {
   td.append(summary, table, add);
   tr.append(td);
   return tr;
+}
+
+// Adding a course by hand picks from the course-rules list rather than taking
+// free text: a typo'd name has no rule, so it would score as Regular and show
+// up as "not in rules" instead of as the course the reader meant. The input is
+// a datalist search so a long list stays usable, and Add stays disabled until
+// the typed name matches a rule.
+function buildCourseAdder(onAdd) {
+  const wrap = document.createElement('div');
+  wrap.className = 'row';
+  wrap.onclick = e => e.stopPropagation();
+
+  const listId = `courses-${++adderSeq}`;
+  const list = document.createElement('datalist');
+  list.id = listId;
+  for (const { display } of state.rules.values()) {
+    const o = document.createElement('option');
+    o.value = display;
+    list.append(o);
+  }
+
+  const name = document.createElement('input');
+  name.className = 'sm';
+  name.setAttribute('list', listId);
+  name.placeholder = 'Search courses…';
+
+  const grade = document.createElement('select');
+  grade.className = 'sm';
+  for (const g of ['A', 'B', 'C', 'D', 'F']) {
+    const o = document.createElement('option');
+    o.value = g; o.textContent = g;
+    grade.append(o);
+  }
+
+  const btn = document.createElement('button');
+  btn.className = 'sm';
+  btn.textContent = 'Add';
+
+  const match = () => state.rules.get(normalize(name.value))?.display ?? null;
+  const sync = () => { btn.disabled = !match(); };
+  sync();
+  name.oninput = sync;
+
+  btn.onclick = () => {
+    const display = match();
+    if (!display) return;
+    onAdd({ name: display, grade: grade.value, raw: grade.value });
+  };
+  name.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); btn.click(); } };
+
+  wrap.append(list, name, grade, btn);
+  return wrap;
 }
 
 // Second-level filter, only meaningful inside the review pile. Rebuilt on every
