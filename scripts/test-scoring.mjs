@@ -1,5 +1,5 @@
 import { scoreApplicant, normalizeGrade, parseCsv, toCsv, checkSubmission, statusFor, DEFAULT_SETTINGS } from '../public/scoring.js';
-import { reasonsFor, needsReview, notesFor, REASON_LABEL, RETURNING, classifyReturning, wasMember, isTransfer } from '../public/review.js';
+import { reasonsFor, needsReview, notesFor, resolvableByHand, REASON_LABEL, RETURNING, classifyReturning, wasMember, isTransfer } from '../public/review.js';
 import { renderTemplate, renderMessage, varsFor, splitName } from '../public/email.js';
 import { readFileSync, existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
@@ -232,6 +232,33 @@ t('a qualified applicant with an unlisted course still needs a look', () => {
   const a = applicant({ unknown: ['Some New Elective'] });
   assert.equal(statusFor(a), 'QUALIFIED');
   assert.equal(needsReview(a), true);
+});
+t('typing the courses in by hand clears the unreadable card', () => {
+  const a = applicant({ problems: [problem('no-grade-table')], resolved: true });
+  assert.equal(needsReview(a), false);
+  assert.deepEqual([...reasonsFor(a)], []);
+  assert.equal(statusFor(a), 'QUALIFIED');
+});
+t('marking reviewed does not answer a wrong term or an unlisted course', () => {
+  const a = applicant({
+    problems: [problem('no-text')],
+    unknown: ['Underwater Basketry'],
+    check: { schoolOk: true, termOk: false, termReason: 'Fall 2025, expected Spring 2026' },
+    resolved: true,
+  });
+  assert.deepEqual([...reasonsFor(a)].sort(), ['term', 'unlisted']);
+  assert.equal(needsReview(a), true);
+});
+t('the toggle is only offered for a reason hand entry can settle', () => {
+  assert.equal(resolvableByHand(applicant({ problems: [problem('download')] })), true);
+  assert.equal(resolvableByHand(applicant()), false);
+  assert.equal(
+    resolvableByHand(applicant({ check: { schoolOk: false, termOk: true } })), false);
+});
+t('a resolved card says so in the notes instead of its old problem', () => {
+  const notes = notesFor(applicant({ problems: [problem('no-grade-table')], resolved: true }));
+  assert.ok(notes.includes('courses entered by hand'));
+  assert.ok(!notes.includes('text for no-grade-table'));
 });
 t('notes read the text off each problem, not the object', () => {
   const notes = notesFor(applicant({ problems: [problem('no-grade-table')] }));

@@ -29,11 +29,26 @@ export const REVIEW_REASONS = [
 
 export const REASON_LABEL = new Map(REVIEW_REASONS);
 
+// `resolved` is set when a reader has typed the courses in by hand. It settles
+// exactly the reasons that act of typing answers — the card could not be read,
+// or no courses came off it — and nothing else. A wrong semester, an unknown
+// school or an unclassified course are untouched by it, because keying in
+// grades does not make any of those true.
+const settledByHand = new Set(['no-grade-table', 'no-text', 'download', 'read-error']);
+export const liveProblems = a =>
+  (a.problems ?? []).filter(p => !(a.resolved && settledByHand.has(p?.code)));
+
+// True when the applicant is in the pile for a reason typing the courses in by
+// hand can actually answer, which is what decides whether the detail row offers
+// the "mark reviewed" toggle at all.
+export const resolvableByHand = a =>
+  (a.problems ?? []).some(p => settledByHand.has(p?.code));
+
 export function reasonsFor(a) {
   const set = new Set();
   if (a.check?.termOk === false) set.add('term');
   if (a.check?.schoolOk === false) set.add('school');
-  for (const p of a.problems ?? []) if (p?.code) set.add(p.code);
+  for (const p of liveProblems(a)) if (p?.code) set.add(p.code);
   if (a.result?.flags?.includes('no-courses')) set.add('nocourses');
   if (a.unknown?.length) set.add('unlisted');
   return set;
@@ -42,10 +57,11 @@ export function reasonsFor(a) {
 // Wants a human's attention, which is broader than the status: an applicant can
 // be comfortably QUALIFIED and still have an unlisted course worth classifying.
 export const needsReview = a =>
-  (a.problems?.length ?? 0) > 0 || (a.unknown?.length ?? 0) > 0 || statusFor(a) === 'NEEDS REVIEW';
+  liveProblems(a).length > 0 || (a.unknown?.length ?? 0) > 0 || statusFor(a) === 'NEEDS REVIEW';
 
 export function notesFor(a) {
-  const notes = (a.problems ?? []).map(p => p.text);
+  const notes = liveProblems(a).map(p => p.text);
+  if (a.resolved) notes.push('courses entered by hand');
   if (a.check?.termReason) notes.push(a.check.termReason);
   if (a.check?.schoolReason) notes.push(a.check.schoolReason);
   if (a.unknown?.length) notes.push(`${a.unknown.length} unlisted course${a.unknown.length > 1 ? 's' : ''}`);

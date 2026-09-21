@@ -2,7 +2,7 @@
 import { parseCsv, toCsv, scoreApplicant, checkSubmission, statusFor, DEFAULT_SETTINGS } from './scoring.js';
 import { extractCourses } from './extract.js';
 import {
-  REVIEW_REASONS, REASON_LABEL, reasonsFor, needsReview, notesFor,
+  REVIEW_REASONS, REASON_LABEL, reasonsFor, needsReview, notesFor, resolvableByHand, liveProblems,
   RETURNING, classifyReturning, wasMember, isTransfer,
 } from './review.js';
 import { TEMPLATE_VARS, renderMessage } from './email.js';
@@ -696,11 +696,34 @@ function detailRow(a) {
 
   const add = buildCourseAdder(course => { a.courses.push(course); rescoreAll(); });
 
-  if (a.problems.length) {
+  // The score already follows the courses — rescoreAll runs on every add — so
+  // the status pill is right the moment the last grade goes in. What it cannot
+  // do on its own is decide that a card the extractor could not read has now
+  // been dealt with, because only the reader knows the typing is finished. This
+  // is that one call, and it toggles back for a reader who spoke too soon.
+  if (resolvableByHand(a)) {
+    const done = document.createElement('button');
+    done.className = 'sm';
+    const label = () => {
+      done.textContent = a.resolved
+        ? 'Put back in review'
+        : `Mark reviewed — ${statusOf(a)}`;
+    };
+    label();
+    done.onclick = e => {
+      e.stopPropagation();
+      a.resolved = !a.resolved;
+      renderResults();
+    };
+    add.append(done);
+  }
+
+  const problems = liveProblems(a);
+  if (problems.length) {
     const warn = document.createElement('p');
     warn.className = 'note';
     warn.style.marginBottom = '10px';
-    warn.textContent = a.problems.map(p => p.text).join(' · ');
+    warn.textContent = problems.map(p => p.text).join(' · ');
     td.append(warn);
   }
   td.append(summary, table, add);
