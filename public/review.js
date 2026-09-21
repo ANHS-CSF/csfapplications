@@ -64,6 +64,7 @@ export function notesFor(a) {
   if (a.resolved) notes.push('courses entered by hand');
   if (a.check?.termReason) notes.push(a.check.termReason);
   if (a.check?.schoolReason) notes.push(a.check.schoolReason);
+  if (a.check?.schoolOverridden) notes.push('school accepted by hand');
   if (a.unknown?.length) notes.push(`${a.unknown.length} unlisted course${a.unknown.length > 1 ? 's' : ''}`);
   if (a.links?.length > 1) notes.push('two cards merged');
   if (/fresh/i.test(a.level ?? '')) notes.push('freshman — cannot apply');

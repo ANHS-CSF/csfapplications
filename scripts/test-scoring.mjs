@@ -260,6 +260,24 @@ t('a resolved card says so in the notes instead of its old problem', () => {
   assert.ok(notes.includes('courses entered by hand'));
   assert.ok(!notes.includes('text for no-grade-table'));
 });
+t('an accepted school leaves the review pile and scores normally', () => {
+  const overridden = { schoolOk: true, termOk: true, schoolReason: null, schoolOverridden: true };
+  const a = applicant({ check: overridden });
+  assert.equal(statusFor(a), 'QUALIFIED');
+  assert.equal(needsReview(a), false);
+  assert.deepEqual([...reasonsFor(a)], []);
+  assert.ok(notesFor(a).includes('school accepted by hand'));
+});
+t('accepting the school does not excuse the wrong semester', () => {
+  const a = applicant({
+    check: {
+      schoolOk: true, schoolReason: null, schoolOverridden: true,
+      termOk: false, termReason: 'Wrong semester: card is Fall 2025, expected Spring 2026',
+    },
+  });
+  assert.equal(statusFor(a), 'NEEDS REVIEW');
+  assert.deepEqual([...reasonsFor(a)], ['term']);
+});
 t('notes read the text off each problem, not the object', () => {
   const notes = notesFor(applicant({ problems: [problem('no-grade-table')] }));
   assert.ok(notes.includes('text for no-grade-table'));

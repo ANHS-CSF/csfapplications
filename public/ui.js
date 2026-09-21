@@ -491,7 +491,15 @@ function rescoreAll() {
       dfAnywhereDisqualifies: !!state.settings.dfAnywhereDisqualifies,
     });
     a.unknown = a.courses.filter(c => !isKnown(c.name)).map(c => c.name);
-    a.check = checkSubmission({ schools: a.schools, terms: a.terms }, state.settings);
+    // The raw verdict is kept beside the effective one so the detail row knows
+    // an override is worth offering, and what it is overriding. Applying the
+    // override to `check` itself — rather than teaching statusFor, reasonsFor
+    // and notesFor about a second flag — is what keeps the status, the review
+    // pile, the notes and the export agreeing with each other.
+    a.rawCheck = checkSubmission({ schools: a.schools, terms: a.terms }, state.settings);
+    a.check = a.schoolOverride && a.rawCheck.schoolOk === false
+      ? { ...a.rawCheck, schoolOk: true, schoolReason: null, schoolOverridden: true }
+      : a.rawCheck;
     a.returning = classifyReturning(a.returningRaw);
   }
   renderResults();
@@ -716,6 +724,24 @@ function detailRow(a) {
       renderResults();
     };
     add.append(done);
+  }
+
+  // Same shape of call as "mark reviewed", for the other judgement only a
+  // person can make: the heading says a school the settings do not list, and
+  // the reader is the one who knows whether that is a transfer, a concurrent
+  // enrollment or a heading that simply did not read cleanly.
+  if (a.rawCheck?.schoolOk === false) {
+    const accept = document.createElement('button');
+    accept.className = 'sm';
+    accept.textContent = a.schoolOverride
+      ? 'Reject this school again'
+      : `Accept this school — ${statusFor({ ...a, check: { ...a.rawCheck, schoolOk: true, schoolReason: null } })}`;
+    accept.onclick = e => {
+      e.stopPropagation();
+      a.schoolOverride = !a.schoolOverride;
+      rescoreAll();
+    };
+    add.append(accept);
   }
 
   const problems = liveProblems(a);
